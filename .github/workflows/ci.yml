@@ -35,6 +35,7 @@ jobs:
       - name: Run integration tests with tmux screenshots
         run: |
           cd test/integration
+          chmod +x ./run-screenshots.sh
           node run-screenshots.js ./screenshots
 
       - name: Upload screenshots as artifacts

@@ -20,12 +20,6 @@
       "./skills"
     ]
   },
-  "peerDependencies": {
-    "@mariozechner/pi-ai": "*",
-    "@mariozechner/pi-coding-agent": "*",
-    "@mariozechner/pi-tui": "*",
-    "@sinclair/typebox": "*"
-  },
   "devDependencies": {
     "@types/node": "^25.6.0",
     "typescript": "^6.0.2",
