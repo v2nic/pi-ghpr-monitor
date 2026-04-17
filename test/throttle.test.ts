@@ -325,12 +325,11 @@ describe("Tool action enum excludes stop", () => {
 		expect(actions).not.toContain("stop");
 	});
 
-	it("steering prompt tells LLM not to stop monitoring", () => {
+	it("steering prompt describes monitoring behavior", () => {
 		const fs = require("fs");
 		const path = require("path");
 		const source = fs.readFileSync(path.join(__dirname, "../src/index.ts"), "utf-8");
 		
-		// The steering prompt should instruct the LLM not to stop
-		expect(source).toContain("do NOT stop monitoring on your own");
+		expect(source).toContain("Monitoring continues until the user stops it with /ghpr-monitor off");
 	});
 });

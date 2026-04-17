@@ -201,7 +201,7 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 	// For testing: allows pointing at a mock server
 	let mockBaseUrl: string | undefined;
 
-	const STEERING_PROMPT = `You have access to the ghpr-monitor tool. When the user asks you to watch or monitor a PR, use ghpr-monitor with action "start" to begin monitoring. Monitoring continues until the user explicitly stops it with /ghpr-monitor off — do NOT stop monitoring on your own. You will receive PR status updates as notifications — address any issues noted (unresolved comments, conflicts, failing checks, etc.). Even when CI is green, keep monitoring for new review comments.`;
+	const STEERING_PROMPT = `You have access to the ghpr-monitor tool. When the user asks you to watch or monitor a PR, use ghpr-monitor with action "start" to begin monitoring. The tool has actions: start and status. Monitoring continues until the user stops it with /ghpr-monitor off. You will receive PR status updates as notifications.`;
 
 	// Inject steering prompt when monitor is idle (so the LLM knows about the tool)
 	pi.on("before_agent_start", async (event, _ctx) => {
@@ -430,9 +430,8 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 		promptGuidelines: [
 			"When the user asks you to watch or monitor a PR, use ghpr-monitor with action='start'.",
 			"Accept either a GitHub PR URL or separate owner/repo/pr_number.",
-			"Never stop monitoring on your own — only the user can stop with /ghpr-monitor off.",
-			"Keep monitoring even when CI is green, to watch for new review comments.",
-			"You will receive PR status updates as notifications — address any issues noted.",
+			"Monitoring runs until the user stops it with /ghpr-monitor off.",
+			"You will receive PR status updates as notifications.",
 		],
 		parameters: GhprMonitorParams,
 
