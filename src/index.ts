@@ -194,6 +194,9 @@ type MonitorState =
 export default function ghprMonitorExtension(pi: ExtensionAPI) {
 	let monitorState: MonitorState = { status: "idle" };
 	let lastStatus: PRStatus | null = null;
+	let agentTurnActive = false;
+	let queuedUpdate: string | null = null;
+	let lastSentUpdate: string | null = null;
 
 	// For testing: allows pointing at a mock server
 	let mockBaseUrl: string | undefined;
@@ -206,6 +209,22 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 		return {
 			systemPrompt: event.systemPrompt + "\n\n" + STEERING_PROMPT,
 		};
+	});
+
+	// Track agent turn state to avoid spamming updates while LLM is working
+	pi.on("turn_start", () => {
+		agentTurnActive = true;
+	});
+
+	pi.on("turn_end", () => {
+		agentTurnActive = false;
+		// Flush queued update when turn ends (if any)
+		if (queuedUpdate !== null) {
+			const update = queuedUpdate;
+			queuedUpdate = null;
+			pi.sendUserMessage(update, {deliverAs: "steer"});
+			lastSentUpdate = update;
+		}
 	});
 
 	// Clean up on session shutdown
@@ -265,7 +284,14 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 				const update = formatStatusUpdate(lastStatus, curr, config);
 
 				if (update) {
-					pi.sendUserMessage(update, {deliverAs: "steer"});
+					if (agentTurnActive) {
+						// Don't spam the LLM while it's working - queue for later
+						queuedUpdate = update;
+					} else if (update !== lastSentUpdate) {
+						// Only send if something changed since last update
+						pi.sendUserMessage(update, {deliverAs: "steer"});
+						lastSentUpdate = update;
+					}
 				}
 
 				lastStatus = curr;
