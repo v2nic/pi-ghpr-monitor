@@ -258,7 +258,7 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 			monitorState = { status: "idle" };
 		});
 
-		return `Started monitoring ${config.owner}/${config.repo}#${config.number} (interval: ${config.intervalSec}s, mode: ${config.mode})`;
+		return `Started monitoring https://${config.host}/${config.owner}/${config.repo}/pull/${config.number} (interval: ${config.intervalSec}s, mode: ${config.mode})`;
 	}
 
 	function stopMonitor(): string {
@@ -268,7 +268,7 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 			monitorState = { status: "idle" };
 			lastStatus = null;
 			needsReminder = false;
-			return `Stopped monitoring ${config.owner}/${config.repo}#${config.number}`;
+			return `Stopped monitoring https://${config.host}/${config.owner}/${config.repo}/pull/${config.number}`;
 		}
 		monitorState = { status: "idle" };
 		lastStatus = null;
@@ -295,9 +295,9 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 
 				// Check if PR was merged or closed
 				if (pr.state === "MERGED" || pr.state === "CLOSED") {
-					const prLabel = `${config.owner}/${config.repo}#${config.number}`;
+					const prUrl = `https://${config.host}/${config.owner}/${config.repo}/pull/${config.number}`;
 					const reason = pr.merged ? "merged" : "closed";
-					const msg = `${pr.merged ? "🔀" : "❌"} PR ${prLabel} was ${reason}. Monitoring stopped.`;
+					const msg = `${pr.merged ? "🔀" : "❌"} PR ${prUrl} was ${reason}. Monitoring stopped.`;
 					pi.sendUserMessage(msg, {deliverAs: "steer"});
 					stopMonitor();
 					return;
@@ -377,7 +377,7 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 			if (lower === "on" || raw === "") {
 				if (monitorState.status === "running") {
 					ctx.ui.notify(
-						`Already monitoring ${monitorState.config.owner}/${monitorState.config.repo}#${monitorState.config.number}`,
+						`Already monitoring https://${monitorState.config.host}/${monitorState.config.owner}/${monitorState.config.repo}/pull/${monitorState.config.number}`,
 						"warning",
 					);
 					return;
@@ -480,7 +480,7 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 							content: [
 								{
 									type: "text",
-									text: `Already monitoring ${c.owner}/${c.repo}#${c.number}. Use /ghpr-monitor off to stop.`,
+									text: `Already monitoring https://${c.host}/${c.owner}/${c.repo}/pull/${c.number}. Use /ghpr-monitor off to stop.`,
 								},
 							],
 							details: { action: "start", status: "already_running", config: monitorState.config },
