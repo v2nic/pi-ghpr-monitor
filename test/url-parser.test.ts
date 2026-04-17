@@ -5,7 +5,7 @@
 import { describe, it, expect } from "vitest";
 
 // Inline the parser since it's not exported from analyzer.ts
-const PR_URL_RE = /^https?:\/\/([^/]+)\/([^/]+)\/([^/]+)\/pull\/([0-9]+).*$/i;
+const PR_URL_RE = /^https?:\/\/([^/]+)\/([^/]+)\/([^/]+)\/pull\/([0-9]+)/i;
 
 interface ParsedPR {
 	owner: string;
@@ -77,5 +77,38 @@ describe("parsePRUrl", () => {
 		const result = parsePRUrl("  https://github.com/v2nic/pi-ghpr-monitor/pull/366  ");
 		expect(result).not.toBeNull();
 		expect(result?.number).toBe(366);
+	});
+});
+describe("parsePRUrl with steer message", () => {
+	it("parses URL without trailing message", () => {
+		const url = "https://github.com/owner/repo/pull/42";
+		const m = url.trim().match(PR_URL_RE);
+		expect(m).not.toBeNull();
+		const afterUrl = url.trim().slice(m![0].length).trim();
+		expect(afterUrl).toBe("");
+	});
+
+	it("extracts steer message after URL", () => {
+		const url = "https://github.com/owner/repo/pull/42 Address any CI failure";
+		const m = url.trim().match(PR_URL_RE);
+		expect(m).not.toBeNull();
+		const afterUrl = url.trim().slice(m![0].length).trim();
+		expect(afterUrl).toBe("Address any CI failure");
+	});
+
+	it("extracts multi-word steer message", () => {
+		const url = "https://github.com/owner/repo/pull/42 You are assigned to finishing the work of this PR";
+		const m = url.trim().match(PR_URL_RE);
+		expect(m).not.toBeNull();
+		const afterUrl = url.trim().slice(m![0].length).trim();
+		expect(afterUrl).toBe("You are assigned to finishing the work of this PR");
+	});
+
+	it("URL with trailing slash has empty steer message", () => {
+		const url = "https://github.com/owner/repo/pull/42/";
+		const m = url.trim().match(PR_URL_RE);
+		expect(m).not.toBeNull();
+		const afterUrl = url.trim().slice(m![0].length).trim();
+		expect(afterUrl).toBe("/");
 	});
 });

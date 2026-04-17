@@ -67,11 +67,15 @@ Or add to your project's `.pi/settings.json`:
 ### Command: `/ghpr-monitor`
 
 ```
-/ghpr-monitor https://github.com/owner/repo/pull/42   Paste a PR URL
-/ghpr-monitor owner/repo 42                           Start monitoring PR #42
-/ghpr-monitor on                                       Resume monitoring
-/ghpr-monitor off                                      Stop monitoring
+/ghpr-monitor https://github.com/owner/repo/pull/42                        Start monitoring
+/ghpr-monitor https://github.com/owner/repo/pull/42 Address any CI failure    Start with a message
+/ghpr-monitor owner/repo 42                                                 Start monitoring PR #42
+/ghpr-monitor owner/repo 42 Review all open threads                          Start with a message
+/ghpr-monitor on                                                            Resume monitoring
+/ghpr-monitor off                                                           Stop monitoring
 ```
+
+Any text after the URL or `owner/repo number` is sent to the agent as a steer message. Use it to give the agent context about what you want it to do on the PR.
 
 ### Tool: `ghpr-monitor`
 

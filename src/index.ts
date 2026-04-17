@@ -165,7 +165,7 @@ async function fetchPRData(config: MonitorConfig, signal?: AbortSignal, mockBase
 // PR URL parser
 // ---------------------------------------------------------------------------
 
-const PR_URL_RE = /^https?:\/\/([^\/]+)\/([^\/]+)\/([^\/]+)\/pull\/([0-9]+).*$/i;
+const PR_URL_RE = /^https?:\/\/([^\/]+)\/([^\/]+)\/([^\/]+)\/pull\/([0-9]+)/i;
 
 interface ParsedPR {
 	owner: string;
@@ -359,9 +359,9 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 	// -----------------------------------------------------------------------
 
 	pi.registerCommand("ghpr-monitor", {
-		description: "Start or stop PR monitoring: /ghpr-monitor [on|off] or /ghpr-monitor owner/repo number",
+		description: "Start PR monitoring: /ghpr-monitor <PR URL> [message] or /ghpr-monitor owner/repo <pr-number> [message]",
 		getArgumentCompletions: (prefix: string) => {
-			const completions = ["on", "off", "stop"];
+			const completions = ["on", "off", "stop", "https://github.com"];
 			return completions.filter((c) => c.startsWith(prefix)).map((c) => ({ value: c, label: c }));
 		},
 		handler: async (args, ctx) => {
@@ -383,7 +383,7 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 					return;
 				}
 				ctx.ui.notify(
-					"Usage:\n  /ghpr-monitor <PR URL>  — paste a GitHub PR URL\n  /ghpr-monitor owner/repo <pr-number>\n  /ghpr-monitor off — stop monitoring",
+					"Usage:\n  /ghpr-monitor <PR URL> [message]\n  /ghpr-monitor owner/repo <pr-number> [message]\n  /ghpr-monitor off — stop monitoring",
 					"info",
 				);
 				return;
@@ -392,6 +392,10 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 			// Try parsing as a PR URL first
 			const parsed = parsePRUrl(raw);
 			if (parsed) {
+				const urlMatch = raw.trim().match(PR_URL_RE);
+				const afterUrl = urlMatch ? raw.trim().slice(urlMatch[0].length).trim() : "";
+				const steerMessage = afterUrl || undefined;
+
 				const config: MonitorConfig = {
 					owner: parsed.owner,
 					repo: parsed.repo,
@@ -403,19 +407,23 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 				};
 				const msg = startMonitor(config);
 				ctx.ui.notify(msg, "success");
+				if (steerMessage) {
+					pi.sendUserMessage(steerMessage, {deliverAs: "steer"});
+				}
 				return;
 			}
 
-			// Try parsing as "owner/repo number"
+			// Try parsing as "owner/repo number [message]"
 			const parts = raw.split(/\s+/);
 			if (parts.length >= 2 && parts[0].includes("/")) {
 				const [ownerRepo, numStr] = [parts[0], parts[1]];
 				const [owner, repo] = ownerRepo.split("/");
 				const number = parseInt(numStr, 10);
 				if (!owner || !repo || isNaN(number)) {
-					ctx.ui.notify("Invalid format. Use: /ghpr-monitor owner/repo <pr-number>", "error");
+					ctx.ui.notify("Invalid format. Use: /ghpr-monitor owner/repo <pr-number> [message]", "error");
 					return;
 				}
+				const steerMessage = parts.length > 2 ? parts.slice(2).join(" ") : undefined;
 				const config: MonitorConfig = {
 					owner,
 					repo,
@@ -427,11 +435,14 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 				};
 				const msg = startMonitor(config);
 				ctx.ui.notify(msg, "success");
+				if (steerMessage) {
+					pi.sendUserMessage(steerMessage, {deliverAs: "steer"});
+				}
 				return;
 			}
 
 			ctx.ui.notify(
-				"Usage:\n  /ghpr-monitor <PR URL>  — paste a GitHub PR URL\n  /ghpr-monitor owner/repo <pr-number>  — start monitoring\n  /ghpr-monitor off  — stop monitoring",
+				"Usage:\n  /ghpr-monitor <PR URL> [message] — paste a GH PR URL\n  /ghpr-monitor owner/repo <pr-number> [message]\n  /ghpr-monitor off — stop monitoring",
 				"info",
 			);
 		},
