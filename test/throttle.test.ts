@@ -300,3 +300,37 @@ describe("Update throttling state machine", () => {
 		expect(nextStart).toContain("Failing CI checks");
 	});
 });
+
+
+// Test that the tool action enum does NOT include "stop"
+describe("Tool action enum excludes stop", () => {
+	it("the stop action is not available to the LLM tool", () => {
+		// This is a design contract test: the LLM should not be able
+		// to stop monitoring on its own. Only the user can stop via
+		// the /ghpr-monitor off command.
+		//
+		// The tool's action enum should be ["start", "status"] only.
+		// This test validates the source code contains the correct enum.
+		const fs = require("fs");
+		const path = require("path");
+		const source = fs.readFileSync(path.join(__dirname, "../src/index.ts"), "utf-8");
+		
+		// Find the StringEnum for the action parameter
+		const match = source.match(/action:\s*StringEnum\(\[([^\]]+)\]/);
+		expect(match).not.toBeNull();
+		
+		const actions = match[1];
+		expect(actions).toContain("start");
+		expect(actions).toContain("status");
+		expect(actions).not.toContain("stop");
+	});
+
+	it("steering prompt tells LLM not to stop monitoring", () => {
+		const fs = require("fs");
+		const path = require("path");
+		const source = fs.readFileSync(path.join(__dirname, "../src/index.ts"), "utf-8");
+		
+		// The steering prompt should instruct the LLM not to stop
+		expect(source).toContain("do NOT stop monitoring on your own");
+	});
+});

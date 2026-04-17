@@ -201,7 +201,7 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 	// For testing: allows pointing at a mock server
 	let mockBaseUrl: string | undefined;
 
-	const STEERING_PROMPT = `You have access to the ghpr-monitor tool. When the user asks you to watch or monitor a PR, use ghpr-monitor with action "start" to begin monitoring. When asked to stop, use action "stop". While monitoring, you will receive PR status updates as notifications — respond to them naturally by addressing any issues noted (unresolved comments, conflicts, failing checks, etc.).`;
+	const STEERING_PROMPT = `You have access to the ghpr-monitor tool. When the user asks you to watch or monitor a PR, use ghpr-monitor with action "start" to begin monitoring. Monitoring continues until the user explicitly stops it with /ghpr-monitor off — do NOT stop monitoring on your own. You will receive PR status updates as notifications — address any issues noted (unresolved comments, conflicts, failing checks, etc.). Even when CI is green, keep monitoring for new review comments.`;
 
 	// Inject steering prompt when monitor is idle (so the LLM knows about the tool)
 	pi.on("before_agent_start", async (event, _ctx) => {
@@ -406,8 +406,8 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 	// -----------------------------------------------------------------------
 
 	const GhprMonitorParams = Type.Object({
-		action: StringEnum(["start", "stop", "status"] as const, {
-			description: "Action: start monitoring, stop monitoring, or check status",
+		action: StringEnum(["start", "status"] as const, {
+			description: "Action: start monitoring, or check current status",
 		}),
 		url: Type.Optional(Type.String({ description: "GitHub PR URL (e.g. https://github.com/owner/repo/pull/123). Alternative to owner+repo+pr_number." })),
 		owner: Type.Optional(Type.String({ description: "Repository owner (e.g. 'v2nic')" })),
@@ -425,12 +425,13 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 		name: "ghpr-monitor",
 		label: "GH PR Monitor",
 		description:
-			"Monitor a GitHub pull request for comments, conflicts, and CI status changes. Use action='start' with a 'url' (GitHub PR URL) or with owner+repo+pr_number to begin monitoring. Use action='stop' to stop. Use action='status' to check current monitoring state. Updates are injected as notifications into the session.",
+			"Monitor a GitHub pull request for comments, conflicts, and CI status changes. Use action='start' with a 'url' (GitHub PR URL) or with owner+repo+pr_number to begin monitoring. Use action='status' to check current monitoring state. Monitoring continues until the user stops it with /ghpr-monitor off. Updates are injected as notifications so you can address issues.",
 		promptSnippet: "Monitor a GitHub PR for changes (comments, conflicts, CI failures)",
 		promptGuidelines: [
 			"When the user asks you to watch or monitor a PR, use ghpr-monitor with action='start'.",
 			"Accept either a GitHub PR URL or separate owner/repo/pr_number.",
-			"When the user wants to stop monitoring, use action='stop'.",
+			"Never stop monitoring on your own — only the user can stop with /ghpr-monitor off.",
+			"Keep monitoring even when CI is green, to watch for new review comments.",
 			"You will receive PR status updates as notifications — address any issues noted.",
 		],
 		parameters: GhprMonitorParams,
@@ -444,7 +445,7 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 							content: [
 								{
 									type: "text",
-									text: `Already monitoring ${c.owner}/${c.repo}#${c.number}. Stop it first with action='stop'.`,
+									text: `Already monitoring ${c.owner}/${c.repo}#${c.number}. Use /ghpr-monitor off to stop.`,
 								},
 							],
 							details: { action: "start", status: "already_running", config: monitorState.config },
@@ -495,8 +496,8 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 										"  mode       Watch mode: all, comments, conflicts, actions (default: all)",
 										"  interval   Polling interval in seconds (default: 60, min: 10)",
 										"",
-										"Other actions:",
-										"  ghpr-monitor(action='stop')   — stop monitoring",
+
+										"Other action:",
 										"  ghpr-monitor(action='status') — check current state",
 									].join("\n"),
 								},
@@ -519,14 +520,6 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 					return {
 						content: [{ type: "text", text: msg }],
 						details: { action: "start", status: "started", config },
-					};
-				}
-
-				case "stop": {
-					const msg = stopMonitor();
-					return {
-						content: [{ type: "text", text: msg }],
-						details: { action: "stop", status: "stopped" },
 					};
 				}
 
