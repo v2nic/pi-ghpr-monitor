@@ -265,28 +265,14 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 				const update = formatStatusUpdate(lastStatus, curr, config);
 
 				if (update) {
-					pi.sendMessage({
-						customType: "ghpr-monitor",
-						content: update,
-						display: true,
-						details: {
-							action: "update",
-							owner: config.owner,
-							repo: config.repo,
-							number: config.number,
-							status: curr,
-						},
-					}, {deliverAs: "steer"});
+					pi.sendUserMessage(update, {deliverAs: "steer"});
 				}
 
 				lastStatus = curr;
 			} catch (err) {
 				if (signal.aborted) return;
-				pi.sendMessage({
-					customType: "ghpr-monitor-error",
-					content: `Poll error for ${config.owner}/${config.repo}#${config.number}: ${err instanceof Error ? err.message : String(err)}`,
-					display: true,
-				}, {deliverAs: "steer"});
+				const msg = `Poll error for ${config.owner}/${config.repo}#${config.number}: ${err instanceof Error ? err.message : String(err)}`;
+				pi.sendUserMessage(msg, {deliverAs: "steer"});
 			}
 
 			// Wait for interval (abortable)
