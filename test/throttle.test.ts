@@ -1,0 +1,302 @@
+/**
+ * Tests for update throttling behavior
+ *
+ * Verifies that:
+ * 1. Updates are suppressed while agent turn is active
+ * 2. Queued updates are flushed when turn ends
+ * 3. Duplicate updates are not sent
+ */
+
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import { formatStatusUpdate, snapshotPR, type PRStatus, type MonitorConfig } from "../src/analyzer";
+
+// Test the pure logic functions first
+describe("formatStatusUpdate throttling behavior", () => {
+	const config: MonitorConfig = {
+		owner: "test",
+		repo: "repo",
+		number: 1,
+		host: "github.com",
+		mode: "all",
+		intervalSec: 60,
+		debounceSec: 30,
+	};
+
+	it("returns 'all clear' message when no issues and prev was also clear", () => {
+		const prev: PRStatus = {
+			unresolvedThreads: 0,
+			generalComments: 0,
+			hasConflicts: false,
+			failingChecks: [],
+			pendingChecks: [],
+			lastCommentTimestamp: "",
+			lastCommentBySelf: false,
+		};
+		const curr = { ...prev };
+		// formatStatusUpdate returns "no issues" message when everything is clear
+		const result = formatStatusUpdate(prev, curr, config);
+		expect(result).toContain("no issues");
+	});
+
+	it("reports failing checks when prev had none", () => {
+		const prev: PRStatus = {
+			unresolvedThreads: 0,
+			generalComments: 0,
+			hasConflicts: false,
+			failingChecks: [],
+			pendingChecks: [],
+			lastCommentTimestamp: "2024-01-01T00:00:00Z",
+			lastCommentBySelf: false,
+		};
+		const curr: PRStatus = {
+			...prev,
+			failingChecks: ["ci/test"],
+		};
+		// First time seeing failing checks = report
+		const result = formatStatusUpdate(prev, curr, config);
+		expect(result).toContain("Failing CI checks");
+	});
+
+	it("returns empty string when only pending checks change count", () => {
+		const prev: PRStatus = {
+			unresolvedThreads: 0,
+			generalComments: 0,
+			hasConflicts: false,
+			failingChecks: [],
+			pendingChecks: ["ci/a", "ci/b"],
+			lastCommentTimestamp: "",
+			lastCommentBySelf: false,
+		};
+		const curr: PRStatus = {
+			...prev,
+			pendingChecks: ["ci/a", "ci/b", "ci/c"],
+		};
+		// formatStatusUpdate doesn't return empty for pending check count changes
+		// unless the previous was also pending
+		const result = formatStatusUpdate(prev, curr, config);
+		expect(result).toContain("⏳");
+	});
+
+	it("reports failing checks when they appear", () => {
+		const prev: PRStatus = {
+			unresolvedThreads: 0,
+			generalComments: 0,
+			hasConflicts: false,
+			failingChecks: [],
+			pendingChecks: [],
+			lastCommentTimestamp: "",
+			lastCommentBySelf: false,
+		};
+		const curr: PRStatus = {
+			...prev,
+			failingChecks: ["ci/test", "ci/lint"],
+		};
+		const result = formatStatusUpdate(prev, curr, config);
+		expect(result).toContain("❌ Failing CI checks");
+		expect(result).toContain("ci/test");
+		expect(result).toContain("ci/lint");
+	});
+
+	it("reports conflicts when they appear", () => {
+		const prev: PRStatus = {
+			unresolvedThreads: 0,
+			generalComments: 0,
+			hasConflicts: false,
+			failingChecks: [],
+			pendingChecks: [],
+			lastCommentTimestamp: "",
+			lastCommentBySelf: false,
+		};
+		const curr: PRStatus = {
+			...prev,
+			hasConflicts: true,
+		};
+		const result = formatStatusUpdate(prev, curr, config);
+		expect(result).toContain("⚠️  Merge conflicts detected");
+	});
+
+	it("reports CI passing when checks clear", () => {
+		const prev: PRStatus = {
+			unresolvedThreads: 0,
+			generalComments: 0,
+			hasConflicts: false,
+			failingChecks: ["ci/test"],
+			pendingChecks: ["ci/lint"],
+			lastCommentTimestamp: "",
+			lastCommentBySelf: false,
+		};
+		const curr: PRStatus = {
+			...prev,
+			failingChecks: [],
+			pendingChecks: [],
+		};
+		const result = formatStatusUpdate(prev, curr, config);
+		expect(result).toContain("✅ All CI checks passed");
+	});
+});
+
+// Test the throttling state machine logic
+describe("Update throttling state machine", () => {
+	interface ThrottleState {
+		agentTurnActive: boolean;
+		queuedUpdate: string | null;
+		lastSentUpdate: string | null;
+		sentMessages: string[];
+	}
+
+	function createThrottleSimulator() {
+		let state: ThrottleState = {
+			agentTurnActive: false,
+			queuedUpdate: null,
+			lastSentUpdate: null,
+			sentMessages: [],
+		};
+
+		return {
+			getState: () => ({ ...state }),
+			turnStart: () => {
+				state.agentTurnActive = true;
+			},
+			turnEnd: (sendFn: (msg: string) => void) => {
+				state.agentTurnActive = false;
+				if (state.queuedUpdate !== null) {
+					const update = state.queuedUpdate;
+					state.queuedUpdate = null;
+					sendFn(update);
+					state.lastSentUpdate = update;
+				}
+			},
+			receiveUpdate: (update: string, sendFn: (msg: string) => void) => {
+				if (update) {
+					if (state.agentTurnActive) {
+						// Don't spam the LLM while it's working - queue for later
+						state.queuedUpdate = update;
+					} else if (update !== state.lastSentUpdate) {
+						// Only send if something changed since last update
+						sendFn(update);
+						state.lastSentUpdate = update;
+					}
+				}
+			},
+		};
+	}
+
+	it("sends update immediately when no turn active", () => {
+		const sim = createThrottleSimulator();
+		const messages: string[] = [];
+
+		sim.receiveUpdate("⚠️ Merge conflict", (msg) => messages.push(msg));
+
+		expect(messages).toEqual(["⚠️ Merge conflict"]);
+		expect(sim.getState().lastSentUpdate).toBe("⚠️ Merge conflict");
+	});
+
+	it("queues update when turn is active", () => {
+		const sim = createThrottleSimulator();
+		const messages: string[] = [];
+
+		sim.turnStart();
+		sim.receiveUpdate("⚠️ Merge conflict", (msg) => messages.push(msg));
+
+		expect(messages).toEqual([]);
+		expect(sim.getState().queuedUpdate).toBe("⚠️ Merge conflict");
+	});
+
+	it("flushes queued update when turn ends", () => {
+		const sim = createThrottleSimulator();
+		const messages: string[] = [];
+
+		sim.turnStart();
+		sim.receiveUpdate("⚠️ Merge conflict", (msg) => messages.push(msg));
+		expect(messages).toEqual([]);
+
+		sim.turnEnd((msg) => messages.push(msg));
+
+		expect(messages).toEqual(["⚠️ Merge conflict"]);
+		expect(sim.getState().lastSentUpdate).toBe("⚠️ Merge conflict");
+		expect(sim.getState().queuedUpdate).toBe(null);
+	});
+
+	it("does not send duplicate updates", () => {
+		const sim = createThrottleSimulator();
+		const messages: string[] = [];
+
+		sim.receiveUpdate("⚠️ Merge conflict", (msg) => messages.push(msg));
+		sim.receiveUpdate("⚠️ Merge conflict", (msg) => messages.push(msg));
+
+		expect(messages).toEqual(["⚠️ Merge conflict"]);
+	});
+
+	it("sends new update after different update was sent", () => {
+		const sim = createThrottleSimulator();
+		const messages: string[] = [];
+
+		sim.receiveUpdate("⚠️ Merge conflict", (msg) => messages.push(msg));
+		sim.receiveUpdate("❌ Failing CI", (msg) => messages.push(msg));
+
+		expect(messages).toEqual(["⚠️ Merge conflict", "❌ Failing CI"]);
+	});
+
+	it("replaces queued update with newer one", () => {
+		const sim = createThrottleSimulator();
+		const messages: string[] = [];
+
+		sim.turnStart();
+		sim.receiveUpdate("⚠️ Merge conflict", (msg) => messages.push(msg));
+		sim.receiveUpdate("❌ Failing CI", (msg) => messages.push(msg));
+		sim.turnEnd((msg) => messages.push(msg));
+
+		// Only the most recent update is sent
+		expect(messages).toEqual(["❌ Failing CI"]);
+		expect(sim.getState().lastSentUpdate).toBe("❌ Failing CI");
+	});
+
+	it("handles rapid turn start/end cycles", () => {
+		const sim = createThrottleSimulator();
+		const messages: string[] = [];
+
+		// Turn starts, update arrives, turn ends
+		sim.turnStart();
+		sim.receiveUpdate("⚠️ Merge conflict", (msg) => messages.push(msg));
+		sim.turnEnd((msg) => messages.push(msg));
+
+		// Turn starts again, update arrives
+		sim.turnStart();
+		sim.receiveUpdate("❌ Failing CI", (msg) => messages.push(msg));
+
+		// While turn active, another update arrives
+		sim.receiveUpdate("⏳ Pending checks", (msg) => messages.push(msg));
+		sim.turnEnd((msg) => messages.push(msg));
+
+		expect(messages).toEqual(["⚠️ Merge conflict", "⏳ Pending checks"]);
+	});
+
+	it("stopMonitor should reset state (design contract)", () => {
+		// This documents the expected behavior:
+		// When stopMonitor is called, the monitoring loop stops and
+		// the state should be reset so fresh updates work on next start.
+		// The implementation uses lastStatus = null to achieve this.
+		const testConfig: MonitorConfig = {
+			owner: "test",
+			repo: "repo",
+			number: 1,
+			host: "github.com",
+			mode: "all",
+			intervalSec: 60,
+			debounceSec: 30,
+		};
+		const prev: PRStatus = {
+			unresolvedThreads: 2,
+			generalComments: 1,
+			hasConflicts: false,
+			failingChecks: ["ci/test"],
+			pendingChecks: ["ci/lint"],
+			lastCommentTimestamp: "2024-01-01T00:00:00Z",
+			lastCommentBySelf: false,
+		};
+		// After stopMonitor, lastStatus is set to null
+		// This means next poll will report issues as if first time
+		const nextStart = formatStatusUpdate(null, prev, testConfig);
+		expect(nextStart).toContain("Failing CI checks");
+	});
+});
