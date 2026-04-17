@@ -7,6 +7,7 @@
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import * as http from "node:http";
+import type { ReactionNode } from "../src/analyzer";
 
 // ---------------------------------------------------------------------------
 // In-process mock GitHub server
@@ -43,6 +44,7 @@ function buildResponse() {
 						body: isResolved ? "Looks good" : (state.lastCommentBody as string),
 						author: { login: "reviewer1" },
 						createdAt: new Date().toISOString(),
+						reactions: { nodes: [] as ReactionNode[] },
 					},
 				],
 				pageInfo: { hasNextPage: false },
@@ -56,6 +58,7 @@ function buildResponse() {
 			body: `Comment ${i}`,
 			author: { login: "commenter1" },
 			createdAt: new Date().toISOString(),
+			reactions: { nodes: [] as ReactionNode[] },
 		});
 	}
 	const checkSuiteNodes = [];

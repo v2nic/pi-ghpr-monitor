@@ -13,8 +13,9 @@ import {
 	pendingChecks,
 	formatStatusUpdate,
 	formatActionableItems,
+	snapshotPR,
 } from "../src/analyzer";
-import type { PullRequestData, PRStatus, MonitorConfig, CommitNode } from "../src/analyzer";
+import type { PullRequestData, PRStatus, MonitorConfig, CommitNode, ReactionNode } from "../src/analyzer";
 
 function makeMockPR(overrides: Partial<PullRequestData> = {}): PullRequestData {
 	const defaults: PullRequestData = {
@@ -492,5 +493,122 @@ describe("formatStatusUpdate with detail", () => {
 		const result = formatStatusUpdate(null, curr, config);
 		expect(result).toContain("…");
 		expect(result).not.toContain(longBody);
+	});
+});
+
+describe("acknowledged comments (THUMBS_UP reactions)", () => {
+	const config: MonitorConfig = {
+		owner: "owner",
+		repo: "repo",
+		number: 42,
+		host: "github.com",
+		mode: "all",
+		intervalSec: 60,
+		debounceSec: 30,
+	};
+
+	it("filters out comments with THUMBS_UP reaction from general count and details", () => {
+		const pr: PullRequestData = {
+			comments: {
+				nodes: [
+					{ id: "c-1", body: "Please fix this", author: { login: "reviewer" }, createdAt: "2024-01-01T00:00:00Z", reactions: { nodes: [] } },
+					{ id: "c-2", body: "Quality Gate Passed", author: { login: "sonarqubecloud" }, createdAt: "2024-01-01T00:01:00Z", reactions: { nodes: [{ content: "THUMBS_UP" }] } },
+				],
+			},
+			reviewThreads: { nodes: [] },
+			mergeable: "MERGEABLE",
+			mergeStateStatus: "CLEAN",
+			state: "OPEN",
+			merged: false,
+			commits: { nodes: [{ commit: { checkSuites: { nodes: [] } } }] },
+		};
+		const status = snapshotPR(pr);
+		// c-2 is acknowledged, so only c-1 counts
+		expect(status.generalComments).toBe(1);
+		expect(status.commentDetails).toHaveLength(1);
+		expect(status.commentDetails[0].id).toBe("c-1");
+	});
+
+	it("filters out review threads whose last comment has THUMBS_UP", () => {
+		const pr: PullRequestData = {
+			comments: { nodes: [] },
+			reviewThreads: {
+				nodes: [
+					{
+						id: "t-1",
+						isResolved: false,
+						isOutdated: false,
+						comments: {
+							nodes: [
+								{ id: "tc-1", body: "Fix this", author: { login: "reviewer" }, createdAt: "2024-01-01T00:00:00Z", reactions: { nodes: [] } },
+							],
+							pageInfo: { hasNextPage: false },
+						},
+					},
+					{
+						id: "t-2",
+						isResolved: false,
+						isOutdated: false,
+						comments: {
+							nodes: [
+								{ id: "tc-2", body: "Looks good now", author: { login: "dev" }, createdAt: "2024-01-01T00:01:00Z", reactions: { nodes: [{ content: "THUMBS_UP" }] } },
+							],
+							pageInfo: { hasNextPage: false },
+						},
+					},
+				],
+			},
+			mergeable: "MERGEABLE",
+			mergeStateStatus: "CLEAN",
+			state: "OPEN",
+			merged: false,
+			commits: { nodes: [{ commit: { checkSuites: { nodes: [] } } }] },
+		};
+		const status = snapshotPR(pr);
+		// t-2 is filtered because its last comment has THUMBS_UP
+		expect(status.unresolvedThreads).toBe(1);
+		expect(status.threadDetails).toHaveLength(1);
+		expect(status.threadDetails[0].id).toBe("t-1");
+	});
+
+	it("does not filter comments without reactions", () => {
+		const pr: PullRequestData = {
+			comments: {
+				nodes: [
+					{ id: "c-1", body: "Please fix", author: { login: "reviewer" }, createdAt: "2024-01-01T00:00:00Z", reactions: { nodes: [] } },
+				],
+			},
+			reviewThreads: { nodes: [] },
+			mergeable: "MERGEABLE",
+			mergeStateStatus: "CLEAN",
+			state: "OPEN",
+			merged: false,
+			commits: { nodes: [{ commit: { checkSuites: { nodes: [] } } }] },
+		};
+		const status = snapshotPR(pr);
+		expect(status.generalComments).toBe(1);
+		expect(status.commentDetails[0].id).toBe("c-1");
+	});
+
+	it("filters comments with THUMBS_UP but not other reactions", () => {
+		const pr: PullRequestData = {
+			comments: {
+				nodes: [
+					{ id: "c-1", body: "Nice!", author: { login: "reviewer" }, createdAt: "2024-01-01T00:00:00Z", reactions: { nodes: [{ content: "HEART" }] } },
+					{ id: "c-2", body: "Done", author: { login: "dev" }, createdAt: "2024-01-01T00:01:00Z", reactions: { nodes: [{ content: "THUMBS_UP" }] } },
+				],
+			},
+			reviewThreads: { nodes: [] },
+			mergeable: "MERGEABLE",
+			mergeStateStatus: "CLEAN",
+			state: "OPEN",
+			merged: false,
+			commits: { nodes: [{ commit: { checkSuites: { nodes: [] } } }] },
+		};
+		const status = snapshotPR(pr);
+		// c-1 has HEART (not THUMBS_UP), so it's kept
+		// c-2 has THUMBS_UP, so it's filtered
+		expect(status.generalComments).toBe(1);
+		expect(status.commentDetails[0].id).toBe("c-1");
 	});
 });
