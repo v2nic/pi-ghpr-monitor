@@ -208,10 +208,6 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 		};
 	});
 
-	// Clean up on session shutdown
-	pi.on("session_shutdown", async () => {
-		stopMonitor();
-	});
 
 	function startMonitor(config: MonitorConfig): string {
 		stopMonitor();
