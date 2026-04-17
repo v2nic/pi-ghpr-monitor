@@ -40,7 +40,7 @@ const AWAIT_QUERY = `query AwaitPR(
       state
       merged
       comments(first: $firstComments) {
-        nodes { id body author { login } createdAt }
+        nodes { id body author { login } createdAt reactions(first: 100) { nodes { content } } }
         pageInfo { hasNextPage endCursor }
       }
       reviewThreads(first: $firstThreads) {
@@ -49,7 +49,7 @@ const AWAIT_QUERY = `query AwaitPR(
           isResolved
           isOutdated
           comments(first: $firstReviewComments) {
-            nodes { id body author { login } createdAt }
+            nodes { id body author { login } createdAt reactions(first: 100) { nodes { content } } }
             pageInfo { hasNextPage endCursor }
           }
         }

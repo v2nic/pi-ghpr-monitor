@@ -60,6 +60,7 @@ function buildGraphQLResponse(state: MockPRState): object {
 						body: isResolved ? "Looks good now" : state.lastCommentBody,
 						author: { login: state.commentAuthors[i % state.commentAuthors.length] || "reviewer1" },
 						createdAt: new Date(Date.now() - (i + 1) * 60000).toISOString(),
+						reactions: { nodes: [] },
 					},
 				],
 				pageInfo: { hasNextPage: false },
@@ -74,6 +75,7 @@ function buildGraphQLResponse(state: MockPRState): object {
 			body: i === 0 ? state.lastCommentBody : `General comment ${i + 1}`,
 			author: { login: state.commentAuthors[i % state.commentAuthors.length] || "commenter1" },
 			createdAt: new Date(Date.now() - i * 30000).toISOString(),
+			reactions: { nodes: [] },
 		});
 	}
 

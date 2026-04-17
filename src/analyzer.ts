@@ -8,11 +8,16 @@
 // GitHub GraphQL response types
 // ---------------------------------------------------------------------------
 
+export interface ReactionNode {
+	content: string;
+}
+
 export interface CommentNode {
 	id: string;
 	body: string;
 	author: { login: string };
 	createdAt: string;
+	reactions?: { nodes: ReactionNode[] };
 }
 
 export interface ReviewThreadNode {
@@ -112,7 +117,11 @@ const FAILURE_CONCLUSIONS: Set<string> = new Set(["FAILURE", "ERROR", "TIMED_OUT
 const PENDING_STATUSES: Set<string> = new Set(["IN_PROGRESS", "QUEUED", "WAITING", "STARTUP_FAILURE"]);
 
 export function countUnresolvedThreads(pr: PullRequestData): number {
-	return pr.reviewThreads.nodes.filter((t: ReviewThreadNode) => !t.isResolved).length;
+	return pr.reviewThreads.nodes.filter((t: ReviewThreadNode) => {
+		if (t.isResolved) return false;
+		const last = t.comments.nodes[t.comments.nodes.length - 1];
+		return !last || !isAcknowledged(last);
+	}).length;
 }
 
 export function hasConflicts(pr: PullRequestData): boolean {
@@ -162,9 +171,20 @@ export function getLatestCommentTimestamp(pr: PullRequestData): string {
 	return latest;
 }
 
+const ACKNOWLEDGED_REACTIONS = new Set(["THUMBS_UP"]);
+
+/** A comment is acknowledged if it has any THUMBS_UP reaction. */
+function isAcknowledged(comment: CommentNode): boolean {
+	return !!(comment.reactions?.nodes?.some((r: ReactionNode) => ACKNOWLEDGED_REACTIONS.has(r.content)));
+}
+
 export function snapshotPR(pr: PullRequestData): PRStatus {
 	const threads = pr.reviewThreads.nodes
 		.filter((t: ReviewThreadNode) => !t.isResolved)
+		.filter((t: ReviewThreadNode) => {
+			const last = t.comments.nodes[t.comments.nodes.length - 1];
+			return !last || !isAcknowledged(last);
+		})
 		.map((t: ReviewThreadNode) => {
 			const comments = t.comments.nodes;
 			const last = comments[comments.length - 1];
@@ -178,11 +198,13 @@ export function snapshotPR(pr: PullRequestData): PRStatus {
 			};
 		});
 
-	const comments = pr.comments.nodes.map((c: CommentNode) => ({
-		id: c.id,
-		author: c.author?.login ?? "",
-		body: c.body.slice(0, 120),
-	}));
+	const comments = pr.comments.nodes
+		.filter((c: CommentNode) => !isAcknowledged(c))
+		.map((c: CommentNode) => ({
+			id: c.id,
+			author: c.author?.login ?? "",
+			body: c.body.slice(0, 120),
+		}));
 
 	const checks: CheckSummary[] = [];
 	for (const commit of pr.commits.nodes) {
@@ -201,7 +223,7 @@ export function snapshotPR(pr: PullRequestData): PRStatus {
 
 	return {
 		unresolvedThreads: countUnresolvedThreads(pr),
-		generalComments: pr.comments.nodes.length,
+		generalComments: pr.comments.nodes.filter((c: CommentNode) => !isAcknowledged(c)).length,
 		hasConflicts: hasConflicts(pr),
 		failingChecks: failingChecks(pr),
 		pendingChecks: pendingChecks(pr),
