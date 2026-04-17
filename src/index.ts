@@ -322,21 +322,21 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 
 			if (lower === "off" || lower === "stop") {
 				const msg = stopMonitor();
-				ctx.ui.notify(msg, "info");
+				pi.sendUserMessage(msg, {deliverAs: "steer"});
 				return;
 			}
 
 			if (lower === "on" || raw === "") {
 				if (monitorState.status === "running") {
-					ctx.ui.notify(
+					pi.sendUserMessage(
 						`Already monitoring ${monitorState.config.owner}/${monitorState.config.repo}#${monitorState.config.number}`,
-						"warning",
+						{deliverAs: "steer"},
 					);
 					return;
 				}
-				ctx.ui.notify(
+				pi.sendUserMessage(
 					"Usage:\n  /ghpr-monitor <PR URL>  — paste a GitHub PR URL\n  /ghpr-monitor owner/repo <pr-number>\n  /ghpr-monitor off — stop monitoring",
-					"info",
+					{deliverAs: "steer"},
 				);
 				return;
 			}
@@ -354,7 +354,7 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 					debounceSec: 30,
 				};
 				const msg = startMonitor(config);
-				ctx.ui.notify(msg, "success");
+				pi.sendUserMessage(msg, {deliverAs: "steer"});
 				return;
 			}
 
@@ -365,7 +365,7 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 				const [owner, repo] = ownerRepo.split("/");
 				const number = parseInt(numStr, 10);
 				if (!owner || !repo || isNaN(number)) {
-					ctx.ui.notify("Invalid format. Use: /ghpr-monitor owner/repo <pr-number>", "error");
+					pi.sendUserMessage("Invalid format. Use: /ghpr-monitor owner/repo <pr-number>", {deliverAs: "steer"});
 					return;
 				}
 				const config: MonitorConfig = {
@@ -378,13 +378,13 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 					debounceSec: 30,
 				};
 				const msg = startMonitor(config);
-				ctx.ui.notify(msg, "success");
+				pi.sendUserMessage(msg, {deliverAs: "steer"});
 				return;
 			}
 
-			ctx.ui.notify(
+			pi.sendUserMessage(
 				"Usage:\n  /ghpr-monitor <PR URL>  — paste a GitHub PR URL\n  /ghpr-monitor owner/repo <pr-number>  — start monitoring\n  /ghpr-monitor off  — stop monitoring",
-				"info",
+				{deliverAs: "steer"},
 			);
 		},
 	});
