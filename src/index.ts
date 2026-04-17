@@ -468,7 +468,26 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 							content: [
 								{
 									type: "text",
-									text: "Missing required parameters: provide either 'url' or owner+repo+pr_number for action='start'.",
+									text: [
+										"Missing required parameters for action='start'.",
+										"",
+										"Usage:",
+										"  ghpr-monitor(action='start', url='https://github.com/owner/repo/pull/123')",
+										"  ghpr-monitor(action='start', owner='v2nic', repo='gh-pr-review', pr_number=42)",
+										"",
+										"Parameters:",
+										"  url        GitHub PR URL (alternative to owner+repo+pr_number)",
+										"  owner      Repository owner",
+										"  repo       Repository name",
+										"  pr_number  Pull request number",
+										"  mode       Watch mode: all, comments, conflicts, actions (default: all)",
+										"  interval   Polling interval in seconds (default: 60, min: 10)",
+										"",
+										"Other actions:",
+										"  ghpr-monitor(action='stop')   — stop monitoring",
+										"  ghpr-monitor(action='status') — check current state",
+									].join("
+"),
 								},
 							],
 							details: { action: "start", status: "missing_params" },
