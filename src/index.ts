@@ -358,6 +358,7 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 						display: true,
 					});
 				}
+			}
 
 			// Wait for interval (abortable), with backoff after rate limits
 			// Slow polling during active turns — no need to poll frequently while the LLM works
