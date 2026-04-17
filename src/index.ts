@@ -322,21 +322,21 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 
 			if (lower === "off" || lower === "stop") {
 				const msg = stopMonitor();
-				pi.sendUserMessage(msg, {deliverAs: "steer"});
+				ctx.ui.notify(msg, "info");
 				return;
 			}
 
 			if (lower === "on" || raw === "") {
 				if (monitorState.status === "running") {
-					pi.sendUserMessage(
+					ctx.ui.notify(
 						`Already monitoring ${monitorState.config.owner}/${monitorState.config.repo}#${monitorState.config.number}`,
-						{deliverAs: "steer"},
+						"warning",
 					);
 					return;
 				}
-				pi.sendUserMessage(
+				ctx.ui.notify(
 					"Usage:\n  /ghpr-monitor <PR URL>  — paste a GitHub PR URL\n  /ghpr-monitor owner/repo <pr-number>\n  /ghpr-monitor off — stop monitoring",
-					{deliverAs: "steer"},
+					"info",
 				);
 				return;
 			}
@@ -354,7 +354,7 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 					debounceSec: 30,
 				};
 				const msg = startMonitor(config);
-				pi.sendUserMessage(msg, {deliverAs: "steer"});
+				ctx.ui.notify(msg, "success");
 				return;
 			}
 
@@ -365,7 +365,7 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 				const [owner, repo] = ownerRepo.split("/");
 				const number = parseInt(numStr, 10);
 				if (!owner || !repo || isNaN(number)) {
-					pi.sendUserMessage("Invalid format. Use: /ghpr-monitor owner/repo <pr-number>", {deliverAs: "steer"});
+					ctx.ui.notify("Invalid format. Use: /ghpr-monitor owner/repo <pr-number>", "error");
 					return;
 				}
 				const config: MonitorConfig = {
@@ -378,13 +378,13 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 					debounceSec: 30,
 				};
 				const msg = startMonitor(config);
-				pi.sendUserMessage(msg, {deliverAs: "steer"});
+				ctx.ui.notify(msg, "success");
 				return;
 			}
 
-			pi.sendUserMessage(
+			ctx.ui.notify(
 				"Usage:\n  /ghpr-monitor <PR URL>  — paste a GitHub PR URL\n  /ghpr-monitor owner/repo <pr-number>  — start monitoring\n  /ghpr-monitor off  — stop monitoring",
-				{deliverAs: "steer"},
+				"info",
 			);
 		},
 	});
@@ -486,8 +486,7 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 										"Other actions:",
 										"  ghpr-monitor(action='stop')   — stop monitoring",
 										"  ghpr-monitor(action='status') — check current state",
-									].join("
-"),
+									].join("\n"),
 								},
 							],
 							details: { action: "start", status: "missing_params" },
