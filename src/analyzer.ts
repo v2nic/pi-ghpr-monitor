@@ -375,3 +375,20 @@ export function formatActionableItems(status: PRStatus, config: MonitorConfig): 
 
 	return lines.length > 0 ? lines.join("\n") : null;
 }
+
+/**
+ * Format a footer status line for the TUI status bar.
+ * Shows the PR URL with emoji indicators for each issue type.
+ * No emojis when no actionable items.
+ */
+export function formatFooterStatus(config: MonitorConfig, status: PRStatus | null): string {
+	const url = `https://${config.host}/${config.owner}/${config.repo}/pull/${config.number}`;
+	if (!status) return `📡 ${url}`;
+	const emojis: string[] = [];
+	if (status.hasConflicts) emojis.push("⚠️");
+	if (status.unresolvedThreads > 0) emojis.push("💬");
+	if (status.generalComments > 0) emojis.push("📝");
+	if (status.failingChecks.length > 0) emojis.push("❌");
+	if (status.pendingChecks.length > 0) emojis.push("⏳");
+	return emojis.length > 0 ? `📡 ${url} ${emojis.join("")}` : `📡 ${url}`;
+}

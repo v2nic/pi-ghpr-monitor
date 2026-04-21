@@ -13,6 +13,7 @@ import {
 	pendingChecks,
 	formatStatusUpdate,
 	formatActionableItems,
+	formatFooterStatus,
 	snapshotPR,
 } from "../src/analyzer";
 import type { PullRequestData, PRStatus, MonitorConfig, CommitNode, ReactionNode } from "../src/analyzer";
@@ -666,5 +667,81 @@ describe("formatStatusUpdate does not repeat all-clear on unchanged status", () 
 		expect(first).toContain("no issues");
 		const second = formatStatusUpdate(clean, clean, config);
 		expect(second).toBe("");
+	});
+});
+
+describe("formatFooterStatus", () => {
+	const config: MonitorConfig = {
+		owner: "mobilityhouse", repo: "vgi-na-masscec", number: 366,
+		host: "github.com", mode: "all", intervalSec: 60, debounceSec: 30,
+	};
+	const clean: PRStatus = {
+		unresolvedThreads: 0, generalComments: 0, hasConflicts: false,
+		failingChecks: [], pendingChecks: [],
+		lastCommentTimestamp: "", lastCommentBySelf: false,
+		threadDetails: [], commentDetails: [], checkDetails: [],
+	};
+
+	it("shows URL without emojis when no issues", () => {
+		const status = clean;
+		const result = formatFooterStatus(config, status);
+		expect(result).toBe("📡 https://github.com/mobilityhouse/vgi-na-masscec/pull/366");
+	});
+
+	it("shows URL without emojis when status is null", () => {
+		const result = formatFooterStatus(config, null);
+		expect(result).toBe("📡 https://github.com/mobilityhouse/vgi-na-masscec/pull/366");
+	});
+
+	it("shows conflict emoji", () => {
+		const status = { ...clean, hasConflicts: true };
+		const result = formatFooterStatus(config, status);
+		expect(result).toBe("📡 https://github.com/mobilityhouse/vgi-na-masscec/pull/366 ⚠️");
+	});
+
+	it("shows thread emoji", () => {
+		const status = { ...clean, unresolvedThreads: 3 };
+		const result = formatFooterStatus(config, status);
+		expect(result).toBe("📡 https://github.com/mobilityhouse/vgi-na-masscec/pull/366 💬");
+	});
+
+	it("shows comment emoji", () => {
+		const status = { ...clean, generalComments: 2 };
+		const result = formatFooterStatus(config, status);
+		expect(result).toBe("📡 https://github.com/mobilityhouse/vgi-na-masscec/pull/366 📝");
+	});
+
+	it("shows failing check emoji", () => {
+		const status = { ...clean, failingChecks: ["ci/test"] };
+		const result = formatFooterStatus(config, status);
+		expect(result).toBe("📡 https://github.com/mobilityhouse/vgi-na-masscec/pull/366 ❌");
+	});
+
+	it("shows pending check emoji", () => {
+		const status = { ...clean, pendingChecks: ["ci/build"] };
+		const result = formatFooterStatus(config, status);
+		expect(result).toBe("📡 https://github.com/mobilityhouse/vgi-na-masscec/pull/366 ⏳");
+	});
+
+	it("shows multiple emojis for multiple issues", () => {
+		const status = { ...clean, hasConflicts: true, unresolvedThreads: 1, failingChecks: ["ci/test"] };
+		const result = formatFooterStatus(config, status);
+		expect(result).toBe("📡 https://github.com/mobilityhouse/vgi-na-masscec/pull/366 ⚠️💬❌");
+	});
+
+	it("shows all emojis when all issue types present", () => {
+		const status = {
+			...clean,
+			hasConflicts: true, unresolvedThreads: 1, generalComments: 1,
+			failingChecks: ["ci/test"], pendingChecks: ["ci/build"],
+		};
+		const result = formatFooterStatus(config, status);
+		expect(result).toBe("📡 https://github.com/mobilityhouse/vgi-na-masscec/pull/366 ⚠️💬📝❌⏳");
+	});
+
+	it("uses custom host in URL", () => {
+		const ghConfig = { ...config, host: "github.corp.com" };
+		const result = formatFooterStatus(ghConfig, null);
+		expect(result).toBe("📡 https://github.corp.com/mobilityhouse/vgi-na-masscec/pull/366");
 	});
 });

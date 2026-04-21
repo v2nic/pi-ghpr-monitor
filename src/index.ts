@@ -9,7 +9,7 @@
  * injects notifications into the agent session so the LLM can take action.
  */
 
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI, ExtensionUIContext } from "@mariozechner/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
 import { StringEnum } from "@mariozechner/pi-ai";
 import {
@@ -19,6 +19,7 @@ import {
 	snapshotPR,
 	formatActionableItems,
 	formatStatusUpdate,
+	formatFooterStatus,
 } from "./analyzer";
 
 // ---------------------------------------------------------------------------
@@ -199,6 +200,7 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 	let needsReminder = false;
 	let backoffSec = 0;
 	let consecutiveNoChange = 0;
+	let uiCtx: ExtensionUIContext | undefined;
 	const MAX_BACKOFF_SEC = 300; // 5 minutes max rate-limit backoff
 	const MAX_IDLE_SEC = 3600; // 1 hour max idle polling
 
@@ -247,6 +249,7 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 		const controller = new AbortController();
 		monitorState = { status: "running", config, controller };
 		lastStatus = null;
+		updateFooter();
 
 		pollLoop(config, controller.signal).catch((err) => {
 			if (controller.signal.aborted) return;
@@ -261,6 +264,15 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 		return `Started monitoring https://${config.host}/${config.owner}/${config.repo}/pull/${config.number} (interval: ${config.intervalSec}s, mode: ${config.mode})`;
 	}
 
+	function updateFooter() {
+		if (!uiCtx) return;
+		if (monitorState.status === "running") {
+			uiCtx.setStatus("ghpr-monitor", formatFooterStatus(monitorState.config, lastStatus));
+		} else {
+			uiCtx.setStatus("ghpr-monitor", undefined);
+		}
+	}
+
 	function stopMonitor(): string {
 		if (monitorState.status === "running") {
 			monitorState.controller.abort();
@@ -269,13 +281,14 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 			lastStatus = null;
 			needsReminder = false;
 			consecutiveNoChange = 0;
+			updateFooter();
 			return `Stopped monitoring https://${config.host}/${config.owner}/${config.repo}/pull/${config.number}`;
 		}
 		monitorState = { status: "idle" };
 		lastStatus = null;
 		needsReminder = false;
 		consecutiveNoChange = 0;
-		lastStatus = null;
+		updateFooter();
 		return "No monitor running";
 	}
 
@@ -331,6 +344,7 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 
 				lastStatus = curr;
 				backoffSec = 0;
+				updateFooter();
 				if (hadChange) {
 					consecutiveNoChange = 0;
 				} else {
@@ -391,6 +405,7 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 			return completions.filter((c) => c.startsWith(prefix)).map((c) => ({ value: c, label: c }));
 		},
 		handler: async (args, ctx) => {
+			uiCtx = ctx.ui;
 			const raw = args.trim();
 			const lower = raw.toLowerCase();
 
@@ -509,6 +524,7 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 		parameters: GhprMonitorParams,
 
 		async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
+			uiCtx = _ctx.ui;
 			switch (params.action) {
 				case "start": {
 					if (monitorState.status === "running") {
