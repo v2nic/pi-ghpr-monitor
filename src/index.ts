@@ -202,6 +202,7 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 	let backoffSec = 0;
 	let consecutiveNoChange = 0;
 	let uiCtx: ExtensionUIContext | undefined;
+	let pollWakeResolve: (() => void) | null = null;
 	const MAX_BACKOFF_SEC = 300; // 5 minutes max rate-limit backoff
 	const MAX_IDLE_SEC = 3600; // 1 hour max idle polling
 
@@ -230,12 +231,17 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 		if (queuedUpdate !== null) {
 			const update = queuedUpdate;
 			queuedUpdate = null;
-			pi.sendUserMessage(update, {deliverAs: "steer"});
+		pi.sendUserMessage(update, {deliverAs: "steer"});
 			lastSentUpdate = update;
 		}
 		// Schedule a reminder on next poll if actionable items remain
 		if (monitorState.status === "running" && lastStatus) {
 			needsReminder = true;
+		}
+		// Wake the poll loop early so the footer updates with latest state
+		if (pollWakeResolve) {
+			pollWakeResolve();
+			pollWakeResolve = null;
 		}
 	});
 
@@ -278,6 +284,7 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 	function stopMonitor(): string {
 		if (monitorState.status === "running") {
 			monitorState.controller.abort();
+			pollWakeResolve = null;
 			const config = monitorState.config;
 			monitorState = { status: "idle" };
 			lastStatus = null;
@@ -384,11 +391,16 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 				: baseSec;
 			const waitSec = agentTurnActive ? Math.max(idleSec, 300) : idleSec;
 			await new Promise<void>((resolve) => {
-				const timer = setTimeout(resolve, waitSec * 1000);
+				pollWakeResolve = resolve;
+				const timer = setTimeout(() => {
+					pollWakeResolve = null;
+					resolve();
+				}, waitSec * 1000);
 				signal.addEventListener(
 					"abort",
 					() => {
 						clearTimeout(timer);
+						pollWakeResolve = null;
 						resolve();
 					},
 					{ once: true },
