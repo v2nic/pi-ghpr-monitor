@@ -266,9 +266,9 @@ export function formatStatusUpdate(prev: PRStatus | null, curr: PRStatus, config
 		const prevCount = prev?.generalComments ?? 0;
 		const commentLines = formatCommentDetails(curr.commentDetails ?? [], prev?.commentDetails);
 		if (curr.generalComments > prevCount) {
-			lines.push(`📝 ${curr.generalComments - prevCount} new general comment(s) on ${prLabel}:`);
+			lines.push(`💭 ${curr.generalComments - prevCount} new general comment(s) on ${prLabel}:`);
 		} else if (!prev) {
-			lines.push(`📝 ${curr.generalComments} general comment(s) on ${prLabel}:`);
+			lines.push(`💭 ${curr.generalComments} general comment(s) on ${prLabel}:`);
 		}
 		if (commentLines) {
 			lines.push(commentLines);
@@ -365,7 +365,7 @@ export function formatActionableItems(status: PRStatus, config: MonitorConfig): 
 	}
 
 	if (status.generalComments > 0) {
-		lines.push(`📝 ${status.generalComments} general comment(s) on ${prLabel}:`);
+		lines.push(`💭 ${status.generalComments} general comment(s) on ${prLabel}:`);
 		const commentLines = formatCommentDetails(status.commentDetails ?? []);
 		if (commentLines) {
 			lines.push(commentLines);
@@ -387,7 +387,7 @@ export function formatFooterStatus(config: MonitorConfig, status: PRStatus | nul
 	const emojis: string[] = [];
 	if (status.hasConflicts) emojis.push("⚠️");
 	if (status.unresolvedThreads > 0) emojis.push("💬");
-	if (status.generalComments > 0) emojis.push("📝");
+	if (status.generalComments > 0) emojis.push("💭");
 	if (status.failingChecks.length > 0) emojis.push("❌");
 	if (status.pendingChecks.length > 0) emojis.push("⏳");
 	return emojis.length > 0 ? `📡 ${url} ${emojis.join("")}` : `📡 ${url}`;

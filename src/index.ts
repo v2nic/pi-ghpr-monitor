@@ -194,6 +194,7 @@ type MonitorState =
 export default function ghprMonitorExtension(pi: ExtensionAPI) {
 	let monitorState: MonitorState = { status: "idle" };
 	let lastStatus: PRStatus | null = null;
+	let lastStatusTimestamp: Date | null = null;
 	let agentTurnActive = false;
 	let queuedUpdate: string | null = null;
 	let lastSentUpdate: string | null = null;
@@ -249,6 +250,7 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 		const controller = new AbortController();
 		monitorState = { status: "running", config, controller };
 		lastStatus = null;
+		lastStatusTimestamp = null;
 		updateFooter();
 
 		pollLoop(config, controller.signal).catch((err) => {
@@ -279,6 +281,7 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 			const config = monitorState.config;
 			monitorState = { status: "idle" };
 			lastStatus = null;
+			lastStatusTimestamp = null;
 			needsReminder = false;
 			consecutiveNoChange = 0;
 			updateFooter();
@@ -286,6 +289,7 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 		}
 		monitorState = { status: "idle" };
 		lastStatus = null;
+		lastStatusTimestamp = null;
 		needsReminder = false;
 		consecutiveNoChange = 0;
 		updateFooter();
@@ -343,6 +347,7 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 				}
 
 				lastStatus = curr;
+				lastStatusTimestamp = new Date();
 				backoffSec = 0;
 				updateFooter();
 				if (hadChange) {
@@ -394,6 +399,22 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 		}
 	}
 
+	// Format the current monitor status for display alongside usage
+	function formatCurrentStatus(): string {
+		if (monitorState.status !== "running") return "";
+		const c = monitorState.config;
+		const header = `Monitoring https://${c.host}/${c.owner}/${c.repo}/pull/${c.number} (mode: ${c.mode}, interval: ${c.intervalSec}s)`;
+		if (!lastStatus) {
+			return `${header}\nNo status update received yet.`;
+		}
+		const ts = lastStatusTimestamp ? lastStatusTimestamp.toLocaleString() : "unknown";
+		const status = formatActionableItems(lastStatus, c);
+		if (status) {
+			return `${header}\n${status}\nLast checked: ${ts}`;
+		}
+		return `${header}\n✨ No issues, all clear (last checked: ${ts})`;
+	}
+
 	// -----------------------------------------------------------------------
 	// Register the /ghpr-monitor command
 	// -----------------------------------------------------------------------
@@ -417,9 +438,10 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 
 			if (lower === "on" || raw === "") {
 				if (monitorState.status === "running") {
+					const statusText = formatCurrentStatus();
 					ctx.ui.notify(
-						`Already monitoring https://${monitorState.config.host}/${monitorState.config.owner}/${monitorState.config.repo}/pull/${monitorState.config.number}`,
-						"warning",
+						`${statusText}\nUsage:\n  /ghpr-monitor <PR URL> [message]\n  /ghpr-monitor owner/repo <pr-number> [message]\n  /ghpr-monitor off — stop monitoring`,
+						"info",
 					);
 					return;
 				}
@@ -620,8 +642,9 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 					}
 					if (monitorState.status === "running") {
 						const c = monitorState.config;
+						const ts = lastStatusTimestamp ? lastStatusTimestamp.toLocaleString() : "unknown";
 						const statusLine = lastStatus
-							? `\nLast update: ${lastStatus.unresolvedThreads} unresolved threads, ${lastStatus.generalComments} comments, conflicts: ${lastStatus.hasConflicts}, failing: ${lastStatus.failingChecks.join(", ") || "none"}`
+							? `\nLast update: ${lastStatus.unresolvedThreads} unresolved threads, ${lastStatus.generalComments} comments, conflicts: ${lastStatus.hasConflicts}, failing: ${lastStatus.failingChecks.join(", ") || "none"}\nLast checked: ${ts}`
 							: "\nNo status update received yet.";
 						return {
 							content: [
@@ -630,7 +653,7 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 									text: `Monitoring ${c.owner}/${c.repo}#${c.number} (mode: ${c.mode}, interval: ${c.intervalSec}s)${statusLine}`,
 								},
 							],
-							details: { action: "status", status: "running", config: c, lastStatus },
+							details: { action: "status", status: "running", config: c, lastStatus, lastStatusTimestamp },
 						};
 					}
 					return {

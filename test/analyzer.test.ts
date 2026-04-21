@@ -708,7 +708,7 @@ describe("formatFooterStatus", () => {
 	it("shows comment emoji", () => {
 		const status = { ...clean, generalComments: 2 };
 		const result = formatFooterStatus(config, status);
-		expect(result).toBe("📡 https://github.com/mobilityhouse/vgi-na-masscec/pull/366 📝");
+		expect(result).toBe("📡 https://github.com/mobilityhouse/vgi-na-masscec/pull/366 💭");
 	});
 
 	it("shows failing check emoji", () => {
@@ -736,7 +736,7 @@ describe("formatFooterStatus", () => {
 			failingChecks: ["ci/test"], pendingChecks: ["ci/build"],
 		};
 		const result = formatFooterStatus(config, status);
-		expect(result).toBe("📡 https://github.com/mobilityhouse/vgi-na-masscec/pull/366 ⚠️💬📝❌⏳");
+		expect(result).toBe("📡 https://github.com/mobilityhouse/vgi-na-masscec/pull/366 ⚠️💬💭❌⏳");
 	});
 
 	it("uses custom host in URL", () => {
