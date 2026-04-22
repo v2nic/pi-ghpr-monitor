@@ -302,14 +302,11 @@ describe("Update throttling state machine", () => {
 
 
 // Test that the tool action enum does NOT include "stop"
-describe("Tool action enum excludes stop", () => {
+describe("Tool action enum", () => {
 	it("the stop action is not available to the LLM tool", () => {
 		// This is a design contract test: the LLM should not be able
 		// to stop monitoring on its own. Only the user can stop via
 		// the /ghpr-monitor off command.
-		//
-		// The tool's action enum should be ["start", "status"] only.
-		// This test validates the source code contains the correct enum.
 		const fs = require("fs");
 		const path = require("path");
 		const source = fs.readFileSync(path.join(__dirname, "../src/index.ts"), "utf-8");
@@ -321,6 +318,7 @@ describe("Tool action enum excludes stop", () => {
 		const actions = match[1];
 		expect(actions).toContain("start");
 		expect(actions).toContain("status");
+		expect(actions).toContain("check");
 		expect(actions).not.toContain("stop");
 	});
 
@@ -557,5 +555,91 @@ describe("Poll error recovery and backoff", () => {
 
 		sim.onError("error connecting to api.github.com");
 		expect(sim.getMessages()[1].content).toContain("retrying in 120s");
+	});
+});
+
+// Test /ghpr-monitor check — immediately wake and reset backoff
+describe("Check now command", () => {
+	function createCheckSimulator() {
+		let backoffSec = 0;
+		let consecutiveNoChange = 3;
+		let wakeCalled = false;
+		const INTERVAL_SEC = 60;
+		const MAX_BACKOFF_SEC = 300;
+
+		return {
+			getBackoffSec: () => backoffSec,
+			getConsecutiveNoChange: () => consecutiveNoChange,
+			setConsecutiveNoChange: (n: number) => { consecutiveNoChange = n; },
+			wasWakeCalled: () => wakeCalled,
+
+			onError(errorMsg: string) {
+				backoffSec = backoffSec === 0
+					? INTERVAL_SEC
+					: Math.min(backoffSec * 2, MAX_BACKOFF_SEC);
+			},
+
+			onSuccess() {
+				backoffSec = 0;
+			},
+
+			// Simulates /ghpr-monitor check
+			onCheck() {
+				backoffSec = 0;
+				consecutiveNoChange = 0;
+				wakeCalled = true;
+			},
+
+			getWaitSec(): number {
+				const baseSec = backoffSec > 0 ? backoffSec : INTERVAL_SEC;
+				const idleSec = consecutiveNoChange > 3
+					? Math.min(INTERVAL_SEC * Math.pow(2, consecutiveNoChange - 3), 3600)
+					: baseSec;
+				return idleSec;
+			},
+		};
+	}
+
+	it("resets backoff to zero", () => {
+		const sim = createCheckSimulator();
+		sim.onError("connection refused");
+		sim.onError("connection refused");
+		expect(sim.getBackoffSec()).toBe(120);
+
+		sim.onCheck();
+		expect(sim.getBackoffSec()).toBe(0);
+	});
+
+	it("resets idle backoff by zeroing consecutiveNoChange", () => {
+		const sim = createCheckSimulator();
+		// Simulate 5 consecutive no-change polls = idle backoff to 240s
+		// (consecutiveNoChange>3 doubles: 60*2^(5-3) = 240)
+		sim.setConsecutiveNoChange(5);
+		expect(sim.getWaitSec()).toBe(240);
+
+		sim.onCheck();
+		expect(sim.getConsecutiveNoChange()).toBe(0);
+		expect(sim.getWaitSec()).toBe(60); // back to base interval
+	});
+
+	it("wakes the poll loop", () => {
+		const sim = createCheckSimulator();
+		sim.onCheck();
+		expect(sim.wasWakeCalled()).toBe(true);
+	});
+
+	it("after check + error, backoff starts fresh from intervalSec", () => {
+		const sim = createCheckSimulator();
+		sim.onError("connection refused");
+		sim.onError("connection refused");
+		sim.onError("connection refused");
+		expect(sim.getBackoffSec()).toBe(240);
+
+		sim.onCheck();
+		expect(sim.getBackoffSec()).toBe(0);
+
+		// If the check itself also fails (e.g. still no connectivity)
+		sim.onError("connection refused");
+		expect(sim.getBackoffSec()).toBe(60); // starts fresh, not 480
 	});
 });
