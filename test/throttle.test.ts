@@ -643,3 +643,245 @@ describe("Check now command", () => {
 		expect(sim.getBackoffSec()).toBe(60); // starts fresh, not 480
 	});
 });
+
+
+// Reproduce and verify fix for spam: repeated failing check notifications
+// when nothing has changed between polls.
+describe("No spam for unchanged failing checks", () => {
+	const config: MonitorConfig = {
+		owner: "mobilityhouse",
+		repo: "vgi-na-masscec",
+		number: 367,
+		host: "github.com",
+		mode: "all",
+		intervalSec: 60,
+		debounceSec: 30,
+	};
+
+	const baseStatus: PRStatus = {
+		unresolvedThreads: 0,
+		generalComments: 0,
+		hasConflicts: false,
+		failingChecks: ["SonarQubeCloud", "SonarCloud Code Analysis"],
+		pendingChecks: [],
+		lastCommentTimestamp: "",
+		lastCommentBySelf: false,
+		threadDetails: [],
+		commentDetails: [],
+		checkDetails: [
+			{ name: "SonarQubeCloud", conclusion: "FAILURE" },
+			{ name: "SonarCloud Code Analysis", conclusion: "FAILURE" },
+		],
+	};
+
+	it("formatStatusUpdate should NOT report failing checks that were already failing in prev", () => {
+		// First poll: report failing checks (no prev)
+		const first = formatStatusUpdate(null, baseStatus, config);
+		expect(first).toContain("Failing CI checks");
+
+		// Second poll: same failing checks — should NOT report again
+		const second = formatStatusUpdate(baseStatus, baseStatus, config);
+		expect(second).not.toContain("Failing CI checks");
+		expect(second).toBe(""); // nothing changed at all
+	});
+
+	it("formatStatusUpdate should report newly failing checks", () => {
+		const prev: PRStatus = {
+			...baseStatus,
+			failingChecks: ["SonarQubeCloud"],
+			checkDetails: [{ name: "SonarQubeCloud", conclusion: "FAILURE" }],
+		};
+		const curr: PRStatus = {
+			...baseStatus,
+			failingChecks: ["SonarQubeCloud", "SonarCloud Code Analysis"],
+			checkDetails: [
+				{ name: "SonarQubeCloud", conclusion: "FAILURE" },
+				{ name: "SonarCloud Code Analysis", conclusion: "FAILURE" },
+			],
+		};
+
+		const update = formatStatusUpdate(prev, curr, config);
+		expect(update).toContain("Failing CI checks");
+		expect(update).toContain("SonarCloud Code Analysis");
+	});
+
+	it("formatStatusUpdate should not repeat same failing checks via reminder loop", () => {
+		// Simulate the spam cycle: agent works, turn ends, poll fires, reminder sent
+		// The key issue: needsReminder fires every turn_end, formatActionableItems
+		// always lists all failing checks, even when nothing changed.
+
+		// After the fix, formatActionableItems should only return content
+		// when something changed vs the last status that was communicated.
+		// For now, verify the formatStatusUpdate dedup works:
+		const first = formatStatusUpdate(null, baseStatus, config);
+		expect(first).toContain("Failing CI checks");
+
+		// Repeated polls with same status
+		const poll2 = formatStatusUpdate(baseStatus, baseStatus, config);
+		expect(poll2).toBe("");
+		const poll3 = formatStatusUpdate(baseStatus, baseStatus, config);
+		expect(poll3).toBe("");
+	});
+
+	it("formatStatusUpdate should report when same checks fail again after a fix", () => {
+		// Was failing, then passed, then failing again
+		const failing: PRStatus = { ...baseStatus };
+		const passing: PRStatus = {
+			...baseStatus,
+			failingChecks: [],
+			pendingChecks: [],
+			checkDetails: [],
+		};
+		const failingAgain: PRStatus = { ...baseStatus };
+
+		// First: report failing
+		expect(formatStatusUpdate(null, failing, config)).toContain("Failing CI checks");
+		// Fixed: report all clear
+		expect(formatStatusUpdate(failing, passing, config)).toContain("All CI checks passed");
+		// Regressed: report failing again
+		expect(formatStatusUpdate(passing, failingAgain, config)).toContain("Failing CI checks");
+	});
+
+	it("formatStatusUpdate should NOT report unchanged merge conflicts every poll", () => {
+		const withConflict: PRStatus = { ...baseStatus, hasConflicts: true, failingChecks: [] };
+
+		// First poll: report conflicts
+		const first = formatStatusUpdate(null, withConflict, config);
+		expect(first).toContain("Merge conflicts");
+
+		// Same conflicts next poll: should NOT repeat
+		const second = formatStatusUpdate(withConflict, withConflict, config);
+		expect(second).not.toContain("Merge conflicts");
+		expect(second).toBe("");
+	});
+});
+
+// Test the full notification state machine including reminders
+describe("Notification state machine: no spam with active agent", () => {
+	const config: MonitorConfig = {
+		owner: "mobilityhouse",
+		repo: "vgi-na-masscec",
+		number: 367,
+		host: "github.com",
+		mode: "all",
+		intervalSec: 60,
+		debounceSec: 30,
+	};
+
+	const failingStatus: PRStatus = {
+		unresolvedThreads: 0,
+		generalComments: 0,
+		hasConflicts: false,
+		failingChecks: ["SonarQubeCloud", "SonarCloud Code Analysis"],
+		pendingChecks: [],
+		lastCommentTimestamp: "",
+		lastCommentBySelf: false,
+		threadDetails: [],
+		commentDetails: [],
+		checkDetails: [
+			{ name: "SonarQubeCloud", conclusion: "FAILURE" },
+			{ name: "SonarCloud Code Analysis", conclusion: "FAILURE" },
+		],
+	};
+
+	function createSpamSimulator() {
+		let lastSentUpdate: string | null = null;
+		let lastSentReminder: string | null = null;
+		let lastStatus: PRStatus | null = null;
+		let agentTurnActive = false;
+		let needsReminder = false;
+		const sentMessages: { type: "update" | "reminder"; content: string }[] = [];
+
+		return {
+			getSentMessages: () => sentMessages,
+
+			turnStart() {
+				agentTurnActive = true;
+				needsReminder = false;
+			},
+			turnEnd() {
+				agentTurnActive = false;
+				needsReminder = true; // always set when monitoring is active
+			},
+			poll(curr: PRStatus) {
+				const update = formatStatusUpdate(lastStatus, curr, config);
+
+				if (update) {
+					if (agentTurnActive) {
+						// queued (would be flushed on turnEnd)
+					} else if (update !== lastSentUpdate) {
+						sentMessages.push({ type: "update", content: update });
+						lastSentUpdate = update;
+					}
+				}
+
+				if (needsReminder && !agentTurnActive) {
+					const reminder = formatActionableItems(curr, config);
+					if (reminder && reminder !== lastSentReminder) {
+						sentMessages.push({ type: "reminder", content: reminder });
+						lastSentReminder = reminder;
+					}
+					needsReminder = false;
+				}
+
+				lastStatus = curr;
+			},
+		};
+	}
+
+	it("should NOT spam agent with same failing checks every turn cycle", () => {
+		const sim = createSpamSimulator();
+
+		// Poll 1: Initial discovery of failing checks (agent idle)
+		sim.poll(failingStatus);
+		expect(sim.getSentMessages().length).toBe(1);
+		expect(sim.getSentMessages()[0].type).toBe("update");
+		expect(sim.getSentMessages()[0].content).toContain("Failing CI checks");
+
+		// Agent starts working on the fix
+		sim.turnStart();
+
+		// Poll 2: Same failing checks while agent is active
+		// formatStatusUpdate returns "" (no change), no update sent
+		sim.poll(failingStatus);
+		expect(sim.getSentMessages().length).toBe(1); // no new message
+
+		// Agent finishes a turn (e.g. edited a file)
+		sim.turnEnd(); // needsReminder = true
+
+		// Poll 3: Same failing checks after turn ends
+		// First reminder is OK (it's the first nudge after turn_end)
+		sim.poll(failingStatus);
+		expect(sim.getSentMessages().length).toBe(2); // initial + first reminder
+		expect(sim.getSentMessages()[1].type).toBe("reminder");
+
+		// Now the spam loop: more turn cycles with same failing checks
+		for (let i = 0; i < 5; i++) {
+			sim.turnStart();
+			sim.turnEnd(); // needsReminder = true again
+			sim.poll(failingStatus); // same status — should NOT re-send reminder
+		}
+		// Total messages should still be 2 (initial + first reminder only)
+		expect(sim.getSentMessages().length).toBe(2);
+	});
+
+	it("should send notification when failing checks are resolved", () => {
+		const sim = createSpamSimulator();
+		const passing: PRStatus = {
+			...failingStatus,
+			failingChecks: [],
+			pendingChecks: [],
+			checkDetails: [],
+		};
+
+		// Initial: 2 failing checks
+		sim.poll(failingStatus);
+		expect(sim.getSentMessages().length).toBe(1);
+		expect(sim.getSentMessages()[0].content).toContain("Failing CI checks");
+
+		// All checks fixed
+		sim.poll(passing);
+		expect(sim.getSentMessages().length).toBe(2);
+		expect(sim.getSentMessages()[1].content).toContain("All CI checks passed");
+	});
+});

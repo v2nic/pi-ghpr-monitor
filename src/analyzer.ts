@@ -234,11 +234,14 @@ export function formatStatusUpdate(prev: PRStatus | null, curr: PRStatus, config
 	const lines: string[] = [];
 	const prLabel = `${config.owner}/${config.repo}#${config.number}`;
 
-	if (curr.hasConflicts) {
+	if (curr.hasConflicts && (!prev || !prev.hasConflicts)) {
 		lines.push(`⚠️  Merge conflicts detected on ${prLabel}`);
 	}
 
-	if (curr.failingChecks.length > 0) {
+	// Report failing checks only when they first appear or when the set changes
+	const prevFailing = prev?.failingChecks ?? [];
+	const newFailing = curr.failingChecks.filter(c => !prevFailing.includes(c));
+	if (curr.failingChecks.length > 0 && (!prev || newFailing.length > 0)) {
 		const details = formatCheckDetails(curr.checkDetails ?? []);
 		if (details) {
 			lines.push(`❌ Failing CI checks on ${prLabel}:${details}`);

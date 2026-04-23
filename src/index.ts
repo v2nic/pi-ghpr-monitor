@@ -208,6 +208,7 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 	let agentTurnActive = false;
 	let queuedUpdate: string | null = null;
 	let lastSentUpdate: string | null = null;
+	let lastSentReminder: string | null = null;
 	let needsReminder = false;
 	let backoffSec = 0;
 	let consecutiveNoChange = 0;
@@ -243,6 +244,7 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 			queuedUpdate = null;
 		pi.sendUserMessage(update, {deliverAs: "steer"});
 			lastSentUpdate = update;
+			lastSentReminder = null; // real update supersedes any prior reminder
 		}
 		// Schedule a reminder on next poll if actionable items remain
 		if (monitorState.status === "running" && lastStatus) {
@@ -267,6 +269,8 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 		monitorState = { status: "running", config, controller };
 		lastStatus = null;
 		lastStatusTimestamp = null;
+		lastSentUpdate = null;
+		lastSentReminder = null;
 		updateFooter();
 
 		pollLoop(config, controller.signal).catch((err) => {
@@ -299,6 +303,8 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 			monitorState = { status: "idle" };
 			lastStatus = null;
 			lastStatusTimestamp = null;
+			lastSentUpdate = null;
+			lastSentReminder = null;
 			needsReminder = false;
 			consecutiveNoChange = 0;
 			updateFooter();
@@ -307,6 +313,8 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 		monitorState = { status: "idle" };
 		lastStatus = null;
 		lastStatusTimestamp = null;
+		lastSentUpdate = null;
+		lastSentReminder = null;
 		needsReminder = false;
 		consecutiveNoChange = 0;
 		updateFooter();
@@ -351,14 +359,18 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 						// Only send if something changed since last update
 						pi.sendUserMessage(update, {deliverAs: "steer"});
 						lastSentUpdate = update;
+						lastSentReminder = null; // real update supersedes any prior reminder
 					}
 				}
 
 				// If agent just went idle and actionable items remain, send a reminder
+				// Only send if the reminder content differs from the last one sent
+				// to avoid spamming the agent with identical reminders during active work
 				if (needsReminder && !agentTurnActive) {
 					const reminder = formatActionableItems(curr, config);
-					if (reminder) {
+					if (reminder && reminder !== lastSentReminder) {
 						pi.sendUserMessage(reminder, {deliverAs: "steer"});
+						lastSentReminder = reminder;
 					}
 					needsReminder = false;
 				}
