@@ -212,6 +212,8 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 	let needsReminder = false;
 	let backoffSec = 0;
 	let consecutiveNoChange = 0;
+	let lastNudgeTime = 0; // epoch ms of last nudge sent (update or reminder)
+	const NUDGE_COOLDOWN_MS = 3 * 60 * 1000; // 3 minutes between nudges for idle agent
 	let uiCtx: ExtensionUIContext | undefined;
 	let pollWakeResolve: (() => void) | null = null;
 	const MAX_BACKOFF_SEC = 300; // 5 minutes max rate-limit backoff
@@ -245,6 +247,7 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 		pi.sendUserMessage(update, {deliverAs: "steer"});
 			lastSentUpdate = update;
 			lastSentReminder = null; // real update supersedes any prior reminder
+			lastNudgeTime = Date.now();
 		}
 		// Schedule a reminder on next poll if actionable items remain
 		if (monitorState.status === "running" && lastStatus) {
@@ -271,6 +274,7 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 		lastStatusTimestamp = null;
 		lastSentUpdate = null;
 		lastSentReminder = null;
+		lastNudgeTime = 0;
 		updateFooter();
 
 		pollLoop(config, controller.signal).catch((err) => {
@@ -305,6 +309,7 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 			lastStatusTimestamp = null;
 			lastSentUpdate = null;
 			lastSentReminder = null;
+			lastNudgeTime = 0;
 			needsReminder = false;
 			consecutiveNoChange = 0;
 			updateFooter();
@@ -315,6 +320,7 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 		lastStatusTimestamp = null;
 		lastSentUpdate = null;
 		lastSentReminder = null;
+		lastNudgeTime = 0;
 		needsReminder = false;
 		consecutiveNoChange = 0;
 		updateFooter();
@@ -360,6 +366,7 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 						pi.sendUserMessage(update, {deliverAs: "steer"});
 						lastSentUpdate = update;
 						lastSentReminder = null; // real update supersedes any prior reminder
+						lastNudgeTime = Date.now();
 					}
 				}
 
@@ -371,8 +378,26 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 					if (reminder && reminder !== lastSentReminder) {
 						pi.sendUserMessage(reminder, {deliverAs: "steer"});
 						lastSentReminder = reminder;
+						lastNudgeTime = Date.now();
 					}
 					needsReminder = false;
+				}
+
+				// Periodic nudge: if the agent has been idle for a while with
+				// unresolved actionable items and nothing else triggered a notification,
+				// send a nudge to keep the agent from forgetting about them.
+				if (
+					!agentTurnActive &&
+					!needsReminder &&
+					lastNudgeTime > 0 &&
+					Date.now() - lastNudgeTime >= NUDGE_COOLDOWN_MS
+				) {
+					const nudge = formatActionableItems(curr, config);
+					if (nudge) {
+						pi.sendUserMessage(nudge, {deliverAs: "steer"});
+						lastSentReminder = nudge;
+						lastNudgeTime = Date.now();
+					}
 				}
 
 				lastStatus = curr;

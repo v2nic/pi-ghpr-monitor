@@ -885,3 +885,208 @@ describe("Notification state machine: no spam with active agent", () => {
 		expect(sim.getSentMessages()[1].content).toContain("All CI checks passed");
 	});
 });
+
+
+// Test periodic nudge for idle agent with unresolved items
+describe("Periodic nudge for idle agent", () => {
+	const config: MonitorConfig = {
+		owner: "mobilityhouse",
+		repo: "vgi-na-masscec",
+		number: 367,
+		host: "github.com",
+		mode: "all",
+		intervalSec: 60,
+		debounceSec: 30,
+	};
+
+	const failingStatus: PRStatus = {
+		unresolvedThreads: 0,
+		generalComments: 0,
+		hasConflicts: false,
+		failingChecks: ["SonarQubeCloud", "SonarCloud Code Analysis"],
+		pendingChecks: [],
+		lastCommentTimestamp: "",
+		lastCommentBySelf: false,
+		threadDetails: [],
+		commentDetails: [],
+		checkDetails: [
+			{ name: "SonarQubeCloud", conclusion: "FAILURE" },
+			{ name: "SonarCloud Code Analysis", conclusion: "FAILURE" },
+		],
+	};
+
+	const NUDGE_COOLDOWN_MS = 3 * 60 * 1000; // 3 minutes
+
+	function createNudgeSimulator() {
+		let lastSentUpdate: string | null = null;
+		let lastSentReminder: string | null = null;
+		let lastNudgeTime = 0;
+		let lastStatus: PRStatus | null = null;
+		let agentTurnActive = false;
+		let needsReminder = false;
+		let now = 1000000; // simulated clock in ms (non-zero like Date.now())
+		const sentMessages: { type: "update" | "reminder" | "nudge"; content: string }[] = [];
+
+		return {
+			getSentMessages: () => sentMessages,
+			advanceTime(ms: number) { now += ms; },
+
+			turnStart() {
+				agentTurnActive = true;
+				needsReminder = false;
+			},
+			turnEnd() {
+				agentTurnActive = false;
+				needsReminder = true;
+			},
+			poll(curr: PRStatus) {
+				const update = formatStatusUpdate(lastStatus, curr, config);
+
+				if (update) {
+					if (agentTurnActive) {
+						// queued
+					} else if (update !== lastSentUpdate) {
+						sentMessages.push({ type: "update", content: update });
+						lastSentUpdate = update;
+						lastSentReminder = null;
+						lastNudgeTime = now;
+					}
+				}
+
+				if (needsReminder && !agentTurnActive) {
+					const reminder = formatActionableItems(curr, config);
+					if (reminder && reminder !== lastSentReminder) {
+						sentMessages.push({ type: "reminder", content: reminder });
+						lastSentReminder = reminder;
+						lastNudgeTime = now;
+					}
+					needsReminder = false;
+				}
+
+				// Periodic nudge (matches pollLoop logic)
+				if (
+					!agentTurnActive &&
+					!needsReminder &&
+					lastNudgeTime > 0 &&
+					now - lastNudgeTime >= NUDGE_COOLDOWN_MS
+				) {
+					const nudge = formatActionableItems(curr, config);
+					if (nudge) {
+						sentMessages.push({ type: "nudge", content: nudge });
+						lastSentReminder = nudge;
+						lastNudgeTime = now;
+					}
+				}
+
+				lastStatus = curr;
+			},
+		};
+	}
+
+	it("nudges idle agent after cooldown when failing checks remain", () => {
+		const sim = createNudgeSimulator();
+
+		// Initial discovery
+		sim.poll(failingStatus);
+		expect(sim.getSentMessages().length).toBe(1);
+
+		// Agent is idle, polls every 60s — but only 2 min passed, no nudge yet
+		sim.advanceTime(60 * 1000);
+		sim.poll(failingStatus);
+		sim.advanceTime(60 * 1000);
+		sim.poll(failingStatus);
+		expect(sim.getSentMessages().length).toBe(1); // no nudge yet
+
+		// 3 minutes total — nudge fires
+		sim.advanceTime(60 * 1000); // 3 min total
+		sim.poll(failingStatus);
+		expect(sim.getSentMessages().length).toBe(2);
+		expect(sim.getSentMessages()[1].type).toBe("nudge");
+	});
+
+	it("does NOT nudge again before cooldown expires", () => {
+		const sim = createNudgeSimulator();
+
+		sim.poll(failingStatus);
+		expect(sim.getSentMessages().length).toBe(1);
+
+		// First nudge at 3 min
+		sim.advanceTime(3 * 60 * 1000);
+		sim.poll(failingStatus);
+		expect(sim.getSentMessages().length).toBe(2);
+
+		// Poll again soon after — no second nudge yet
+		sim.advanceTime(60 * 1000); // only 1 min since last nudge
+		sim.poll(failingStatus);
+		expect(sim.getSentMessages().length).toBe(2);
+
+		// Another minute — still under cooldown
+		sim.advanceTime(60 * 1000); // 2 min since last nudge
+		sim.poll(failingStatus);
+		expect(sim.getSentMessages().length).toBe(2);
+
+		// 3 min since last nudge — second nudge fires
+		sim.advanceTime(60 * 1000); // 3 min since last nudge
+		sim.poll(failingStatus);
+		expect(sim.getSentMessages().length).toBe(3);
+		expect(sim.getSentMessages()[2].type).toBe("nudge");
+	});
+
+	it("does NOT nudge when there are no actionable items", () => {
+		const sim = createNudgeSimulator();
+		const passing: PRStatus = {
+			...failingStatus,
+			failingChecks: [],
+			pendingChecks: [],
+			checkDetails: [],
+		};
+
+		// First poll with passing PR: sends "all clear" update
+		sim.poll(passing);
+		expect(sim.getSentMessages().length).toBe(1);
+		expect(sim.getSentMessages()[0].content).toContain("all clear");
+
+		// Way past cooldown — but no actionable items, so no nudge
+		sim.advanceTime(10 * 60 * 1000);
+		sim.poll(passing);
+		expect(sim.getSentMessages().length).toBe(1); // still just the initial all-clear
+	});
+
+	it("real update resets the nudge cooldown", () => {
+		const sim = createNudgeSimulator();
+		const withNewFailure: PRStatus = {
+			...failingStatus,
+			failingChecks: ["SonarQubeCloud", "SonarCloud Code Analysis", "ci/lint"],
+			checkDetails: [
+				{ name: "SonarQubeCloud", conclusion: "FAILURE" },
+				{ name: "SonarCloud Code Analysis", conclusion: "FAILURE" },
+				{ name: "ci/lint", conclusion: "FAILURE" },
+			],
+		};
+
+		sim.poll(failingStatus);
+		expect(sim.getSentMessages().length).toBe(1); // initial
+
+		// 2 min — no nudge yet
+		sim.advanceTime(2 * 60 * 1000);
+		sim.poll(failingStatus);
+		expect(sim.getSentMessages().length).toBe(1);
+
+		// New failing check appears at 2.5 min — this is a real update, resets cooldown
+		sim.advanceTime(30 * 1000);
+		sim.poll(withNewFailure);
+		expect(sim.getSentMessages().length).toBe(2);
+		expect(sim.getSentMessages()[1].type).toBe("update"); // not nudge
+
+		// 3 min after the last nudge would have been (but only 1 min since real update)
+		sim.advanceTime(60 * 1000);
+		sim.poll(withNewFailure);
+		expect(sim.getSentMessages().length).toBe(2); // no nudge, cooldown reset
+
+		// 3 min after the real update — nudge fires
+		sim.advanceTime(2 * 60 * 1000); // total 3 min since real update
+		sim.poll(withNewFailure);
+		expect(sim.getSentMessages().length).toBe(3);
+		expect(sim.getSentMessages()[2].type).toBe("nudge");
+	});
+});
