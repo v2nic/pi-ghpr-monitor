@@ -112,3 +112,63 @@ describe("parsePRUrl with steer message", () => {
 		expect(afterUrl).toBe("/");
 	});
 });
+
+describe("parsePRShorthand", () => {
+	function parsePRShorthand(input: string): ParsedPR | null {
+		const hashM = input.trim().match(/^([^\s#/]+)\/([^#]+)#([0-9]+)$/);
+		if (hashM) {
+			return { owner: hashM[1], repo: hashM[2], number: parseInt(hashM[3], 10), host: "github.com" };
+		}
+		return null;
+	}
+
+	it("parses owner/repo#number format", () => {
+		const result = parsePRShorthand("mobilityhouse/vgi-na-masscec#373");
+		expect(result).toEqual({
+			owner: "mobilityhouse",
+			repo: "vgi-na-masscec",
+			number: 373,
+			host: "github.com",
+		});
+	});
+
+	it("parses simple owner/repo#1 format", () => {
+		const result = parsePRShorthand("v2nic/pi-ghpr-monitor#366");
+		expect(result).toEqual({
+			owner: "v2nic",
+			repo: "pi-ghpr-monitor",
+			number: 366,
+			host: "github.com",
+		});
+	});
+
+	it("handles whitespace around shorthand", () => {
+		const result = parsePRShorthand("  v2nic/pi-ghpr-monitor#366  ");
+		expect(result).not.toBeNull();
+		expect(result?.number).toBe(366);
+	});
+
+	it("returns null for URL format", () => {
+		expect(parsePRShorthand("https://github.com/v2nic/pi-ghpr-monitor/pull/366")).toBeNull();
+	});
+
+	it("returns null for space-separated format", () => {
+		expect(parsePRShorthand("v2nic/pi-ghpr-monitor 366")).toBeNull();
+	});
+
+	it("returns null for just owner/repo without number", () => {
+		expect(parsePRShorthand("v2nic/pi-ghpr-monitor")).toBeNull();
+	});
+
+	it("returns null for empty string", () => {
+		expect(parsePRShorthand("")).toBeNull();
+	});
+
+	it("returns null for repo with hash in name but no number", () => {
+		expect(parsePRShorthand("v2nic/some-repo#")).toBeNull();
+	});
+
+	it("returns null for non-numeric number after hash", () => {
+		expect(parsePRShorthand("v2nic/repo#abc")).toBeNull();
+	});
+});

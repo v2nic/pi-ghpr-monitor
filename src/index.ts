@@ -2,7 +2,7 @@
  * pi-ghpr-monitor — Pi extension for monitoring GitHub PRs
  *
  * Registers:
- *   /ghpr-monitor [on|off|owner/repo number]  — user-facing command
+ *   /ghpr-monitor [on|off|owner/repo#number|check]  — user-facing command
  *   ghpr-monitor                                 — LLM-callable tool
  *
  * The tool polls a PR for comments, conflicts, and CI status, then
@@ -178,6 +178,16 @@ function parsePRUrl(input: string): ParsedPR | null {
 	return { owner: m[2], repo: m[3], number: parseInt(m[4], 10), host };
 }
 
+/** Parse shorthand formats like "owner/repo#123" */
+function parsePRShorthand(input: string): ParsedPR | null {
+	// Try "owner/repo#number" (e.g. "mobilityhouse/vgi-na-masscec#373")
+	const hashM = input.trim().match(/^([^\s#/]+)\/([^#]+)#([0-9]+)$/);
+	if (hashM) {
+		return { owner: hashM[1], repo: hashM[2], number: parseInt(hashM[3], 10), host: "github.com" };
+	}
+	return null;
+}
+
 // ---------------------------------------------------------------------------
 // Monitor state management
 // ---------------------------------------------------------------------------
@@ -209,7 +219,7 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 	// For testing: allows pointing at a mock server
 	let mockBaseUrl: string | undefined;
 
-	const STEERING_PROMPT = `You have access to the ghpr-monitor tool. When the user asks you to watch or monitor a PR, use ghpr-monitor with action "start" to begin monitoring. The tool has actions: start and status. Monitoring continues until the user stops it with /ghpr-monitor off. The user can also run /ghpr-monitor check to trigger an immediate poll. You will receive PR status updates as notifications.`;
+	const STEERING_PROMPT = `You have access to the ghpr-monitor tool. When the user asks you to watch or monitor a PR, use ghpr-monitor with action "start" to begin monitoring. The tool has actions: start and status. Monitoring continues until the user stops it with /ghpr-monitor off. The user can also run /ghpr-monitor check to trigger an immediate poll. You will receive PR status updates as notifications. The url parameter accepts GitHub PR URLs or shorthand like "owner/repo#123".`;
 
 	// Inject steering prompt when monitor is idle (so the LLM knows about the tool)
 	pi.on("before_agent_start", async (event, _ctx) => {
@@ -467,13 +477,13 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 				if (monitorState.status === "running") {
 					const statusText = formatCurrentStatus();
 					ctx.ui.notify(
-						`${statusText}\nUsage:\n  /ghpr-monitor <PR URL> [message]\n  /ghpr-monitor owner/repo <pr-number> [message]\n  /ghpr-monitor check — check now\n  /ghpr-monitor off — stop monitoring`,
+						`${statusText}\nUsage:\n  /ghpr-monitor <PR URL> [message]\n  /ghpr-monitor owner/repo#123\n  /ghpr-monitor owner/repo <pr-number> [message]\n  /ghpr-monitor check — check now\n  /ghpr-monitor off — stop monitoring`,
 						"info",
 					);
 					return;
 				}
 				ctx.ui.notify(
-					"Usage:\n  /ghpr-monitor <PR URL> [message]\n  /ghpr-monitor owner/repo <pr-number> [message]\n  /ghpr-monitor check — check now\n  /ghpr-monitor off — stop monitoring",
+					"Usage:\n  /ghpr-monitor <PR URL> [message]\n  /ghpr-monitor owner/repo#123\n  /ghpr-monitor owner/repo <pr-number> [message]\n  /ghpr-monitor check — check now\n  /ghpr-monitor off — stop monitoring",
 					"info",
 				);
 				return;
@@ -503,6 +513,23 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 				return;
 			}
 
+			// Try parsing as "owner/repo#number" (e.g. "mobilityhouse/vgi-na-masscec#373")
+			const shorthand = parsePRShorthand(raw);
+			if (shorthand) {
+				const config: MonitorConfig = {
+					owner: shorthand.owner,
+					repo: shorthand.repo,
+					number: shorthand.number,
+					host: shorthand.host,
+					mode: "all",
+					intervalSec: 60,
+					debounceSec: 30,
+				};
+				const msg = startMonitor(config);
+				ctx.ui.notify(msg, "success");
+				return;
+			}
+
 			// Try parsing as "owner/repo number [message]"
 			const parts = raw.split(/\s+/);
 			if (parts.length >= 2 && parts[0].includes("/")) {
@@ -510,7 +537,7 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 				const [owner, repo] = ownerRepo.split("/");
 				const number = parseInt(numStr, 10);
 				if (!owner || !repo || isNaN(number)) {
-					ctx.ui.notify("Invalid format. Use: /ghpr-monitor owner/repo <pr-number> [message]", "error");
+					ctx.ui.notify("Invalid format. Use: /ghpr-monitor owner/repo#123 or owner/repo <pr-number> [message]", "error");
 					return;
 				}
 				const steerMessage = parts.length > 2 ? parts.slice(2).join(" ") : undefined;
@@ -532,7 +559,7 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 			}
 
 			ctx.ui.notify(
-				"Usage:\n  /ghpr-monitor <PR URL> [message] — paste a GH PR URL\n  /ghpr-monitor owner/repo <pr-number> [message]\n  /ghpr-monitor check — check now\n  /ghpr-monitor off — stop monitoring",
+				"Usage:\n  /ghpr-monitor <PR URL> [message] — paste a GH PR URL\n  /ghpr-monitor owner/repo#123\n  /ghpr-monitor owner/repo <pr-number> [message]\n  /ghpr-monitor check — check now\n  /ghpr-monitor off — stop monitoring",
 				"info",
 			);
 		},
@@ -546,7 +573,7 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 		action: StringEnum(["start", "status", "check"] as const, {
 			description: "Action: start monitoring, check current status, or trigger an immediate poll",
 		}),
-		url: Type.Optional(Type.String({ description: "GitHub PR URL (e.g. https://github.com/owner/repo/pull/123). Alternative to owner+repo+pr_number." })),
+		url: Type.Optional(Type.String({ description: "GitHub PR URL (e.g. https://github.com/owner/repo/pull/123) or shorthand (e.g. owner/repo#123). Alternative to owner+repo+pr_number." })),
 		owner: Type.Optional(Type.String({ description: "Repository owner (e.g. 'v2nic')" })),
 		repo: Type.Optional(Type.String({ description: "Repository name (e.g. 'gh-pr-review')" })),
 		pr_number: Type.Optional(Type.Number({ description: "Pull request number" })),
@@ -566,7 +593,7 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 		promptSnippet: "Monitor a GitHub PR for changes (comments, conflicts, CI failures)",
 		promptGuidelines: [
 			"When the user asks you to watch or monitor a PR, use ghpr-monitor with action='start'.",
-			"Accept either a GitHub PR URL or separate owner/repo/pr_number.",
+			"Accept a GitHub PR URL, shorthand like 'owner/repo#123', or separate owner/repo/pr_number.",
 			"Monitoring runs until the user stops it with /ghpr-monitor off.",
 			"The user can run /ghpr-monitor check to trigger an immediate poll.",
 			"You will receive PR status updates as notifications.",
@@ -597,10 +624,10 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 					let resolvedHost = "github.com";
 
 					if (params.url) {
-						const parsed = parsePRUrl(params.url);
+						const parsed = parsePRUrl(params.url) || parsePRShorthand(params.url);
 						if (!parsed) {
 							return {
-								content: [{ type: "text", text: `Invalid PR URL: ${params.url}. Expected format: https://github.com/owner/repo/pull/123` }],
+								content: [{ type: "text", text: `Invalid PR URL or shorthand: ${params.url}. Expected format: https://github.com/owner/repo/pull/123 or owner/repo#123` }],
 								details: { action: "start", status: "invalid_url" },
 							};
 						}
@@ -624,10 +651,11 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 										"",
 										"Usage:",
 										"  ghpr-monitor(action='start', url='https://github.com/owner/repo/pull/123')",
+										"  ghpr-monitor(action='start', url='owner/repo#123')",
 										"  ghpr-monitor(action='start', owner='v2nic', repo='gh-pr-review', pr_number=42)",
 										"",
 										"Parameters:",
-										"  url        GitHub PR URL (alternative to owner+repo+pr_number)",
+										"  url        GitHub PR URL or shorthand (e.g. 'owner/repo#123'), alternative to owner+repo+pr_number",
 										"  owner      Repository owner",
 										"  repo       Repository name",
 										"  pr_number  Pull request number",
