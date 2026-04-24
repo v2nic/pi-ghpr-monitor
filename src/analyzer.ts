@@ -261,7 +261,7 @@ export function formatStatusUpdate(prev: PRStatus | null, curr: PRStatus, config
 		}
 		if (threadLines) {
 			lines.push(threadLines);
-			lines.push("  Add a 👍 reaction to a comment to acknowledge it and stop notifications.");
+			lines.push("  Workflow: React with 👀 to acknowledge, then either resolve the thread (if addressed) or add 👍 (if non-actionable).");
 		}
 	}
 
@@ -363,7 +363,7 @@ export function formatActionableItems(status: PRStatus, config: MonitorConfig): 
 		const threadLines = formatThreadDetails(status.threadDetails ?? []);
 		if (threadLines) {
 			lines.push(threadLines);
-			lines.push("  Add a 👍 reaction to a comment to acknowledge it and stop notifications.");
+			lines.push("  Workflow: React with 👀 to acknowledge, then either resolve the thread (if addressed) or add 👍 (if non-actionable).");
 		}
 	}
 
