@@ -189,7 +189,7 @@ export function snapshotPR(pr: PullRequestData): PRStatus {
 				id: t.id,
 				isResolved: t.isResolved,
 				lastCommentAuthor: last?.author?.login ?? "",
-				lastCommentBody: last?.body?.slice(0, 120) ?? "",
+				lastCommentBody: firstLine(last?.body, 120),
 			};
 		});
 
@@ -198,7 +198,7 @@ export function snapshotPR(pr: PullRequestData): PRStatus {
 		.map((c: CommentNode) => ({
 			id: c.id,
 			author: c.author?.login ?? "",
-			body: c.body.slice(0, 120),
+			body: firstLine(c.body, 120),
 		}));
 
 	const checks: CheckSummary[] = [];
@@ -304,6 +304,13 @@ export function formatStatusUpdate(prev: PRStatus | null, curr: PRStatus, config
 	return lines.join("\n");
 }
 
+/** Keep only the first line of a multiline string, then truncate to maxLen. */
+function firstLine(text: string | undefined | null, maxLen: number): string {
+	if (!text) return "";
+	const first = text.split("\n")[0];
+	return first.length > maxLen ? first.slice(0, maxLen) + "…" : first;
+}
+
 function formatCheckDetails(checks: CheckSummary[]): string {
 	if (checks.length === 0) return "";
 	return checks.map(c => `\n  - ${c.name} (${c.conclusion})`).join("");
@@ -314,10 +321,7 @@ function formatThreadDetails(threads: ThreadSummary[], prev?: ThreadSummary[]): 
 	const prevIds = new Set((prev ?? []).map(t => t.id));
 	return threads
 		.filter(t => !prevIds.has(t.id) || !prev) // show new threads only (or all if no prev)
-		.map(t => {
-			const body = t.lastCommentBody.length > 120 ? t.lastCommentBody.slice(0, 120) + "…" : t.lastCommentBody;
-			return `  - [${t.lastCommentAuthor}] ${body} (id: ${t.id})`;
-		})
+		.map(t => `  - [${t.lastCommentAuthor}] ${firstLine(t.lastCommentBody, 120)} (id: ${t.id})`)
 		.join("\n");
 }
 
@@ -326,10 +330,7 @@ function formatCommentDetails(comments: CommentSummary[], prev?: CommentSummary[
 	const prevIds = new Set((prev ?? []).map(c => c.id));
 	return comments
 		.filter(c => !prevIds.has(c.id) || !prev) // show new comments only (or all if no prev)
-		.map(c => {
-			const body = c.body.length > 120 ? c.body.slice(0, 120) + "…" : c.body;
-			return `  - [${c.author}] ${body} (id: ${c.id})`;
-		})
+		.map(c => `  - [${c.author}] ${firstLine(c.body, 120)} (id: ${c.id})`)
 		.join("\n");
 }
 

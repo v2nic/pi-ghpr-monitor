@@ -495,6 +495,28 @@ describe("formatStatusUpdate with detail", () => {
 		expect(result).toContain("…");
 		expect(result).not.toContain(longBody);
 	});
+
+	it("keeps only the first line of multiline comment bodies", () => {
+		const multilineBody = "## Copilot review feedback — all addressed ✅\n\nAll 5 review comments have been fixed in the force-pushed commit:\n1. Some detail";
+		const curr: PRStatus = {
+			unresolvedThreads: 0,
+			generalComments: 1,
+			hasConflicts: false,
+			failingChecks: [],
+			pendingChecks: [],
+			lastCommentTimestamp: "",
+			lastCommentBySelf: false,
+			threadDetails: [],
+			commentDetails: [
+				{ id: "C_1", author: "v2nic", body: multilineBody },
+			],
+			checkDetails: [],
+		};
+		const result = formatStatusUpdate(null, curr, config);
+		expect(result).toContain("## Copilot review feedback — all addressed ✅");
+		expect(result).not.toContain("All 5 review comments");
+		expect(result).not.toContain("\n\n");
+	});
 });
 
 describe("acknowledged comments (THUMBS_UP reactions)", () => {
