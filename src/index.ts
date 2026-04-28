@@ -253,7 +253,6 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 		// Schedule a reminder on next poll if actionable items remain
 		if (monitorState.status === "running" && lastStatus) {
 			needsReminder = true;
-			lastSentReminder = null; // clear so reminder can re-fire after each turn
 		}
 		// Wake the poll loop early so the footer updates with latest state
 		if (pollWakeResolve) {
