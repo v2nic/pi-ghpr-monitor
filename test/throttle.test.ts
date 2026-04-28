@@ -1121,7 +1121,7 @@ describe("Force check sends current state even when nothing changed", () => {
 			turnEnd() {
 				agentTurnActive = false;
 				needsReminder = true;
-				lastSentReminder = null; // FIX: clear so reminder can re-fire
+				// FIX: do NOT clear lastSentReminder — preserves dedup guard
 			},
 			check() { forceNotify = true; },
 			poll(curr: PRStatus) {
@@ -1210,6 +1210,282 @@ describe("Force check sends current state even when nothing changed", () => {
 	});
 });
 
+// Reproduce the escape-loop bug: pressing Escape triggers turn_end,
+// which clears lastSentReminder, causing the next poll to re-send
+// the same identical reminder. This creates a rapid-fire loop.
+describe("Escape-loop bug: no rapid-fire reminders on repeated turn_end", () => {
+	const config: MonitorConfig = {
+		owner: "test", repo: "repo", number: 1,
+		host: "github.com", mode: "all", intervalSec: 60, debounceSec: 30,
+	};
+
+	const withThreads: PRStatus = {
+		unresolvedThreads: 2, generalComments: 0, hasConflicts: false,
+		failingChecks: [], pendingChecks: [],
+		lastCommentTimestamp: "", lastCommentBySelf: false,
+		threadDetails: [], commentDetails: [], checkDetails: [],
+	};
+
+	// Simulator that matches the CURRENT (buggy) behavior of turn_end:
+	// it clears lastSentReminder, which defeats the dedup guard.
+	function createBuggySimulator() {
+		let lastSentUpdate: string | null = null;
+		let lastSentReminder: string | null = null;
+		let lastNudgeTime = 0;
+		let lastStatus: PRStatus | null = null;
+		let agentTurnActive = false;
+		let needsReminder = false;
+		let now = 1000000;
+		const NUDGE_COOLDOWN_MS = 3 * 60 * 1000;
+		const sentMessages: { type: string; content: string }[] = [];
+
+		return {
+			getSentMessages: () => sentMessages,
+			advanceTime(ms: number) { now += ms; },
+
+			turnStart() { agentTurnActive = true; needsReminder = false; },
+			// BUG: turn_end clears lastSentReminder, allowing duplicate reminders
+			turnEnd() {
+				agentTurnActive = false;
+				needsReminder = true;
+				lastSentReminder = null; // <-- THE BUG: defeats dedup guard
+			},
+			poll(curr: PRStatus) {
+				const update = formatStatusUpdate(lastStatus, curr, config);
+
+				if (update) {
+					if (agentTurnActive) { /* queued */ }
+					else if (update !== lastSentUpdate) {
+						sentMessages.push({ type: "update", content: update });
+						lastSentUpdate = update;
+						lastSentReminder = null;
+						lastNudgeTime = now;
+					}
+				}
+
+				if (needsReminder && !agentTurnActive) {
+					const reminder = formatActionableItems(curr, config);
+					if (reminder && reminder !== lastSentReminder) {
+						sentMessages.push({ type: "reminder", content: reminder });
+						lastSentReminder = reminder;
+						lastNudgeTime = now;
+					}
+					needsReminder = false;
+				}
+
+				// Periodic nudge
+				if (
+					!agentTurnActive &&
+					!needsReminder &&
+					lastNudgeTime > 0 &&
+					now - lastNudgeTime >= NUDGE_COOLDOWN_MS
+				) {
+					const nudge = formatActionableItems(curr, config);
+					if (nudge) {
+						sentMessages.push({ type: "nudge", content: nudge });
+						lastSentReminder = nudge;
+						lastNudgeTime = now;
+					}
+				}
+
+				lastStatus = curr;
+			},
+		};
+	}
+
+	// Simulator that matches the FIXED behavior: turn_end does NOT
+	// clear lastSentReminder, so the dedup guard remains effective.
+	function createFixedSimulator() {
+		let lastSentUpdate: string | null = null;
+		let lastSentReminder: string | null = null;
+		let lastNudgeTime = 0;
+		let lastStatus: PRStatus | null = null;
+		let agentTurnActive = false;
+		let needsReminder = false;
+		let now = 1000000;
+		const NUDGE_COOLDOWN_MS = 3 * 60 * 1000;
+		const sentMessages: { type: string; content: string }[] = [];
+
+		return {
+			getSentMessages: () => sentMessages,
+			advanceTime(ms: number) { now += ms; },
+
+			turnStart() { agentTurnActive = true; needsReminder = false; },
+			// FIX: turn_end does NOT clear lastSentReminder
+			turnEnd() {
+				agentTurnActive = false;
+				needsReminder = true;
+				// lastSentReminder is NOT cleared — dedup guard stays active
+			},
+			poll(curr: PRStatus) {
+				const update = formatStatusUpdate(lastStatus, curr, config);
+
+				if (update) {
+					if (agentTurnActive) { /* queued */ }
+					else if (update !== lastSentUpdate) {
+						sentMessages.push({ type: "update", content: update });
+						lastSentUpdate = update;
+						lastSentReminder = null; // real update supersedes
+						lastNudgeTime = now;
+					}
+				}
+
+				if (needsReminder && !agentTurnActive) {
+					const reminder = formatActionableItems(curr, config);
+					if (reminder && reminder !== lastSentReminder) {
+						sentMessages.push({ type: "reminder", content: reminder });
+						lastSentReminder = reminder;
+						lastNudgeTime = now;
+					}
+					needsReminder = false;
+				}
+
+				// Periodic nudge
+				if (
+					!agentTurnActive &&
+					!needsReminder &&
+					lastNudgeTime > 0 &&
+					now - lastNudgeTime >= NUDGE_COOLDOWN_MS
+				) {
+					const nudge = formatActionableItems(curr, config);
+					if (nudge) {
+						sentMessages.push({ type: "nudge", content: nudge });
+						lastSentReminder = nudge;
+						lastNudgeTime = now;
+					}
+				}
+
+				lastStatus = curr;
+			},
+		};
+	}
+
+	it("BUGGY: escape-loop spams identical reminders every turn_end", () => {
+		const sim = createBuggySimulator();
+
+		// Poll discovers threads
+		sim.poll(withThreads);
+		expect(sim.getSentMessages()).toHaveLength(1);
+		expect(sim.getSentMessages()[0].type).toBe("update");
+
+		// Agent processes the update (turn starts), then user hits Escape (turn ends)
+		sim.turnStart();
+		sim.turnEnd(); // clears lastSentReminder → dedup defeated
+
+		// Poll immediately (turn_end wakes poll loop)
+		sim.poll(withThreads);
+		expect(sim.getSentMessages()).toHaveLength(2);
+		expect(sim.getSentMessages()[1].type).toBe("reminder");
+
+		// User hits Escape again → turn_end clears lastSentReminder AGAIN
+		sim.turnStart();
+		sim.turnEnd();
+
+		// Same poll, same status — BUG: duplicate reminder gets through
+		sim.poll(withThreads);
+		expect(sim.getSentMessages()).toHaveLength(3); // BUG: 3 identical reminders!
+
+		// And again — demonstrates the rapid-fire loop
+		sim.turnStart();
+		sim.turnEnd();
+		sim.poll(withThreads);
+		expect(sim.getSentMessages()).toHaveLength(4); // BUG: 4!
+	});
+
+	it("FIXED: escape-loop is broken by preserving lastSentReminder dedup", () => {
+		const sim = createFixedSimulator();
+
+		// Poll discovers threads
+		sim.poll(withThreads);
+		expect(sim.getSentMessages()).toHaveLength(1);
+		expect(sim.getSentMessages()[0].type).toBe("update");
+
+		// Agent processes the update, then user hits Escape
+		sim.turnStart();
+		sim.turnEnd(); // does NOT clear lastSentReminder
+
+		// Poll immediately
+		// The first reminder after an update is allowed — lastSentReminder was
+		// cleared when the real update was sent (lastSentReminder = null).
+		// This is intentional: one nudge after the agent goes idle is OK.
+		sim.poll(withThreads);
+		expect(sim.getSentMessages()).toHaveLength(2);
+		expect(sim.getSentMessages()[1].type).toBe("reminder");
+
+		// Now the key fix: subsequent escape events do NOT re-send same reminder
+		for (let i = 0; i < 5; i++) {
+			sim.turnStart();
+		sim.turnEnd(); // does NOT clear lastSentReminder
+			sim.poll(withThreads);
+		}
+		// Still only 2 messages — dedup guard held across all turn_end events
+		expect(sim.getSentMessages()).toHaveLength(2);
+	});
+
+	it("FIXED: nudge still fires after cooldown when reminders are deduped", () => {
+		const sim = createFixedSimulator();
+
+		// Initial discovery
+		sim.poll(withThreads);
+		expect(sim.getSentMessages()).toHaveLength(1);
+
+		// Escape → turn_end → poll → one reminder is OK (first after update)
+		sim.turnStart();
+		sim.turnEnd();
+		sim.poll(withThreads);
+		expect(sim.getSentMessages()).toHaveLength(2);
+
+		// More escape → turn_end → polls → dedup prevents same reminder
+		sim.turnStart();
+		sim.turnEnd();
+		sim.poll(withThreads);
+		expect(sim.getSentMessages()).toHaveLength(2); // no duplicate
+
+		// 3 min pass — nudge should fire
+		sim.advanceTime(3 * 60 * 1000);
+		sim.poll(withThreads);
+		expect(sim.getSentMessages()).toHaveLength(3);
+		expect(sim.getSentMessages()[2].type).toBe("nudge");
+
+		// Escape → turn_end → immediate poll → no duplicate (nudge text is same)
+		sim.turnStart();
+		sim.turnEnd();
+		sim.poll(withThreads);
+		expect(sim.getSentMessages()).toHaveLength(3); // still 3
+	});
+
+	it("FIXED: new real update still gets through after dedup", () => {
+		const sim = createFixedSimulator();
+
+		const withCommentsAndThreads: PRStatus = {
+			...withThreads,
+			generalComments: 1,
+			commentDetails: [{ id: "c-1", author: "reviewer", body: "test" }],
+		};
+
+		// Initial discovery of threads
+		sim.poll(withThreads);
+		expect(sim.getSentMessages()).toHaveLength(1);
+
+		// Escape → turn_end → poll → one reminder (first after update)
+		sim.turnStart();
+		sim.turnEnd();
+		sim.poll(withThreads);
+		expect(sim.getSentMessages()).toHaveLength(2);
+
+		// Escape again → turn_end → poll → no duplicate reminder
+		sim.turnStart();
+		sim.turnEnd();
+		sim.poll(withThreads);
+		expect(sim.getSentMessages()).toHaveLength(2); // still 2
+
+		// New status: a general comment appears
+		sim.poll(withCommentsAndThreads);
+		expect(sim.getSentMessages()).toHaveLength(3);
+		expect(sim.getSentMessages()[2].type).toBe("update");
+	});
+});
+
 describe("Reminder fires after agent processes identical actionable items", () => {
 	const config: MonitorConfig = {
 		owner: "test", repo: "repo", number: 1,
@@ -1240,7 +1516,7 @@ describe("Reminder fires after agent processes identical actionable items", () =
 			turnEnd() {
 				agentTurnActive = false;
 				needsReminder = true;
-				lastSentReminder = null; // FIX: clear so reminder can re-fire
+				// FIX: do NOT clear lastSentReminder — preserves dedup guard
 			},
 			poll(curr: PRStatus) {
 				const update = formatStatusUpdate(lastStatus, curr, config);
@@ -1270,7 +1546,7 @@ describe("Reminder fires after agent processes identical actionable items", () =
 		};
 	}
 
-	it("sends reminder even when text is identical to previous reminder", () => {
+	it("sends one reminder after turn_end, then deduplicates identical reminders", () => {
 		const sim = createReminderSim();
 
 		// Poll discovers threads
@@ -1282,19 +1558,18 @@ describe("Reminder fires after agent processes identical actionable items", () =
 		sim.turnStart();
 		sim.turnEnd();
 
-		// Next poll — needsReminder=true, should send reminder
+		// Next poll — needsReminder=true, sends reminder (first time after update)
 		sim.poll(withThreads);
 		expect(sim.getSentMessages()).toHaveLength(2);
 		expect(sim.getSentMessages()[1].type).toBe("reminder");
 
 		// Agent processes reminder but STILL doesn't resolve threads
 		sim.turnStart();
-		sim.turnEnd(); // clears lastSentReminder
+		sim.turnEnd(); // does NOT clear lastSentReminder
 
-		// Next poll — should send reminder AGAIN (this was the bug)
+		// Next poll — same reminder text is deduped by lastSentReminder
 		sim.poll(withThreads);
-		expect(sim.getSentMessages()).toHaveLength(3);
-		expect(sim.getSentMessages()[2].type).toBe("reminder");
+		expect(sim.getSentMessages()).toHaveLength(2); // no duplicate!
 	});
 
 	it("does NOT send reminder if agent is still active", () => {
