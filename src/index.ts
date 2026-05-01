@@ -286,6 +286,15 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 				display: true,
 			});
 			monitorState = { status: "idle" };
+			lastStatus = null;
+			lastStatusTimestamp = null;
+			lastSentUpdate = null;
+			lastSentReminder = null;
+			lastNudgeTime = 0;
+			needsReminder = false;
+			forceNotify = false;
+			consecutiveNoChange = 0;
+			updateFooter();
 		});
 
 		return `Started monitoring https://${config.host}/${config.owner}/${config.repo}/pull/${config.number} (interval: ${config.intervalSec}s, mode: ${config.mode})`;

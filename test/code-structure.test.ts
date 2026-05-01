@@ -99,3 +99,41 @@ describe("lastSentReminder dedup fix", () => {
     expect(src).toContain("reminder !== lastSentReminder");
   });
 });
+
+describe("pollLoop error handler cleanup", () => {
+  it("calls updateFooter() when pollLoop rejects (zombie status line bug)", () => {
+    // Bug: the .catch() handler on pollLoop sets monitorState to idle
+    // but does NOT call updateFooter() or reset state, leaving the
+    // status line (radar emoji) visible even though monitoring has stopped.
+    // If this test fails, the bug has been reintroduced.
+    const catchBlock = src.slice(
+      src.indexOf(".catch((err)"),
+      src.indexOf("return `Started monitoring", src.indexOf(".catch((err)"))
+    );
+
+    // The catch block must call updateFooter() to clear the status line
+    expect(catchBlock).toContain("updateFooter();");
+    // The catch block must also reset lastStatus so stale data isn't left around
+    expect(catchBlock).toContain("lastStatus = null");
+  });
+
+  it("stopMonitor resets all state (baseline for comparison)", () => {
+    // stopMonitor() is the reference implementation for proper cleanup.
+    // It resets: monitorState, lastStatus, lastStatusTimestamp, lastSentUpdate,
+    // lastSentReminder, lastNudgeTime, needsReminder, forceNotify,
+    // consecutiveNoChange, and calls updateFooter().
+    const stopFn = src.slice(
+      src.indexOf("function stopMonitor"),
+      src.indexOf("async function pollLoop")
+    );
+
+    expect(stopFn).toContain("lastStatus = null");
+    expect(stopFn).toContain("lastSentUpdate = null");
+    expect(stopFn).toContain("lastSentReminder = null");
+    expect(stopFn).toContain("lastNudgeTime = 0");
+    expect(stopFn).toContain("needsReminder = false");
+    expect(stopFn).toContain("forceNotify = false");
+    expect(stopFn).toContain("consecutiveNoChange = 0");
+    expect(stopFn).toContain("updateFooter()");
+  });
+});
