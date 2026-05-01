@@ -2,7 +2,7 @@
  * pi-ghpr-monitor — Pi extension for monitoring GitHub PRs
  *
  * Registers:
- *   /ghpr-monitor [on|off|owner/repo#number|check]  — user-facing command
+ *   /ghpr-monitor [on|off|owner/repo#number|check]  — user-facing command (no args = ask agent)
  *   ghpr-monitor                                 — LLM-callable tool
  *
  * The tool polls a PR for comments, conflicts, and CI status, then
@@ -499,7 +499,7 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 	// -----------------------------------------------------------------------
 
 	pi.registerCommand("ghpr-monitor", {
-		description: "Start PR monitoring: /ghpr-monitor <PR URL> [message], /ghpr-monitor check — check now, /ghpr-monitor off — stop",
+		description: "Monitor a PR: /ghpr-monitor [PR URL] [message] — leave blank to let the agent figure it out, /ghpr-monitor check — check now, /ghpr-monitor off — stop",
 		getArgumentCompletions: (prefix: string) => {
 			const completions = ["on", "off", "stop", "check", "https://github.com"];
 			return completions.filter((c) => c.startsWith(prefix)).map((c) => ({ value: c, label: c }));
@@ -536,16 +536,16 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 
 			if (lower === "on" || raw === "") {
 				if (monitorState.status === "running") {
+					// Already monitoring — just show current status
 					const statusText = formatCurrentStatus();
-					ctx.ui.notify(
-						`${statusText}\nUsage:\n  /ghpr-monitor <PR URL> [message]\n  /ghpr-monitor owner/repo#123\n  /ghpr-monitor owner/repo <pr-number> [message]\n  /ghpr-monitor check — check now\n  /ghpr-monitor off — stop monitoring`,
-						"info",
-					);
+					ctx.ui.notify(statusText, "info");
 					return;
 				}
-				ctx.ui.notify(
-					"Usage:\n  /ghpr-monitor <PR URL> [message]\n  /ghpr-monitor owner/repo#123\n  /ghpr-monitor owner/repo <pr-number> [message]\n  /ghpr-monitor check — check now\n  /ghpr-monitor off — stop monitoring",
-					"info",
+				// No args and no monitor running — ask the agent to invoke the tool
+				// so it can figure out the PR from conversation context
+				pi.sendUserMessage(
+					"The user wants to start PR monitoring but didn't provide a PR URL. Please invoke the ghpr-monitor tool with action='start' and the appropriate parameters (url, or owner+repo+pr_number) based on the PR you have been working on.",
+					{deliverAs: "steer"},
 				);
 				return;
 			}
