@@ -224,6 +224,7 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 	let needsReminder = false;
 	let forceNotify = false;
 	let backoffSec = 0;
+	let inErrorBackoff = false;
 	let consecutiveNoChange = 0;
 	let lastNudgeTime = 0; // epoch ms of last nudge sent (update or reminder)
 	const NUDGE_COOLDOWN_MS = 3 * 60 * 1000; // 3 minutes between nudges for idle agent
@@ -280,8 +281,10 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 		if (monitorState.status === "running" && lastStatus) {
 			needsReminder = true;
 		}
-		// Wake the poll loop early so the footer updates with latest state
-		if (pollWakeResolve) {
+		// Wake the poll loop early so the footer updates with latest state.
+		// Do NOT wake during error backoff — the retry delay must be respected
+		// to avoid hammering GitHub with immediate retries on persistent errors.
+		if (pollWakeResolve && !inErrorBackoff) {
 			pollWakeResolve();
 			pollWakeResolve = null;
 		}
@@ -305,6 +308,7 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 		lastSentUpdate = null;
 		lastSentReminder = null;
 		lastNudgeTime = 0;
+		inErrorBackoff = false;
 		updateFooter();
 
 		pollLoop(config, controller.signal).catch((err) => {
@@ -324,6 +328,7 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 			forceNotify = false;
 			queuedForceCheck = null;
 			consecutiveNoChange = 0;
+			inErrorBackoff = false;
 			updateFooter();
 		});
 
@@ -355,6 +360,7 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 			forceNotify = false;
 			queuedForceCheck = null;
 			consecutiveNoChange = 0;
+			inErrorBackoff = false;
 			updateFooter();
 			return `Stopped monitoring https://${config.host}/${config.owner}/${config.repo}/pull/${config.number}`;
 		}
@@ -368,6 +374,7 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 		forceNotify = false;
 		queuedForceCheck = null;
 		consecutiveNoChange = 0;
+		inErrorBackoff = false;
 		updateFooter();
 		return "No monitor running";
 	}
@@ -470,6 +477,7 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 				lastStatus = curr;
 				lastStatusTimestamp = new Date();
 				backoffSec = 0;
+				inErrorBackoff = false;
 				updateFooter();
 				if (hadChange) {
 					consecutiveNoChange = 0;
@@ -485,6 +493,7 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 				backoffSec = backoffSec === 0
 					? config.intervalSec
 					: Math.min(backoffSec * 2, MAX_BACKOFF_SEC);
+				inErrorBackoff = true;
 				pi.sendMessage({
 					customType: "ghpr-monitor-error",
 					content: isRateLimit
@@ -497,10 +506,20 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 			// Wait for interval (abortable), with backoff after any error
 			// Slow polling during active turns — no need to poll frequently while the LLM works
 			const baseSec = backoffSec > 0 ? backoffSec : config.intervalSec;
-			// After 3 consecutive no-change polls, double interval each time up to 1 hour
-			const idleSec = consecutiveNoChange > 3
-				? Math.min(config.intervalSec * Math.pow(2, consecutiveNoChange - 3), MAX_IDLE_SEC)
-				: baseSec;
+			// After 3 consecutive no-change polls, double interval each time up to 1 hour.
+			// When in error backoff, always use at least backoffSec — the error message
+			// promises a specific retry time, and we must honor it regardless of idle
+			// slowdown. This fixes a bug where consecutiveNoChange > 3 would override
+			// the backoff delay, making the actual wait shorter than promised.
+			let idleSec: number;
+			if (consecutiveNoChange > 3) {
+				const idleSlowdown = Math.min(config.intervalSec * Math.pow(2, consecutiveNoChange - 3), MAX_IDLE_SEC);
+				// When in error backoff, use the MAX of idle slowdown and backoff.
+				// This ensures the error backoff is never shorter than promised.
+				idleSec = inErrorBackoff ? Math.max(idleSlowdown, baseSec) : idleSlowdown;
+			} else {
+				idleSec = baseSec;
+			}
 			const waitSec = agentTurnActive ? Math.max(idleSec, 300) : idleSec;
 			await new Promise<void>((resolve) => {
 				pollWakeResolve = resolve;
@@ -583,6 +602,7 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 				}
 				// Reset backoff so the next poll happens at the base interval
 				backoffSec = 0;
+				inErrorBackoff = false;
 				consecutiveNoChange = 0;
 				forceNotify = true;
 				log("Force check triggered via /ghpr-monitor command");
@@ -854,6 +874,7 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 					}
 					// Reset backoff and wake the poll loop
 					backoffSec = 0;
+					inErrorBackoff = false;
 					consecutiveNoChange = 0;
 					forceNotify = true;
 					log("Force check triggered via ghpr-monitor tool");
