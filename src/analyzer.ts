@@ -18,6 +18,10 @@ export interface CommentNode {
 	author: { login: string };
 	createdAt: string;
 	reactions?: { nodes: ReactionNode[] };
+	/** File path (only on PullRequestReviewComment, not IssueComment) */
+	path?: string;
+	/** Line number (only on PullRequestReviewComment, not IssueComment) */
+	line?: number | null;
 }
 
 export interface ReviewThreadNode {
@@ -78,12 +82,26 @@ export interface ThreadSummary {
 	isResolved: boolean;
 	lastCommentAuthor: string;
 	lastCommentBody: string;
+	/** Untruncated body of the last comment (for agent context) */
+	fullBody?: string;
+	/** File path the review thread is anchored to */
+	path?: string;
+	/** Line number the review thread is anchored to */
+	line?: number | null;
+	/** All comments in the thread (for agent context) */
+	allComments?: CommentSummary[];
 }
 
 export interface CommentSummary {
 	id: string;
 	author: string;
 	body: string;
+	/** Untruncated comment body (for agent context) */
+	fullBody?: string;
+	/** File path (only on review comments, not general PR comments) */
+	path?: string;
+	/** Line number (only on review comments, not general PR comments) */
+	line?: number | null;
 }
 
 export interface CheckSummary {
@@ -248,11 +266,24 @@ export function snapshotPR(pr: PullRequestData): PRStatus {
 		.map((t: ReviewThreadNode) => {
 			const comments = t.comments.nodes;
 			const last = comments[comments.length - 1];
+			// The first comment in a review thread typically has the path/line anchor
+			const first = comments[0];
 			return {
 				id: t.id,
 				isResolved: t.isResolved,
 				lastCommentAuthor: last?.author?.login ?? "",
 				lastCommentBody: firstLine(last?.body, 120),
+				fullBody: last?.body ?? "",
+				path: first?.path,
+				line: first?.line,
+				allComments: comments.map((c: CommentNode) => ({
+					id: c.id,
+					author: c.author?.login ?? "",
+					body: firstLine(c.body, 120),
+					fullBody: c.body,
+					path: c.path,
+					line: c.line,
+				})),
 			};
 		});
 
@@ -262,6 +293,7 @@ export function snapshotPR(pr: PullRequestData): PRStatus {
 			id: c.id,
 			author: c.author?.login ?? "",
 			body: firstLine(c.body, 120),
+			fullBody: c.body,
 		}));
 
 	const checks: CheckSummary[] = [];
@@ -474,4 +506,135 @@ export function formatFooterStatus(config: MonitorConfig, status: PRStatus | nul
 	if (status.failingChecks.length > 0) emojis.push("❌");
 	if (status.pendingChecks.length > 0) emojis.push("⏳");
 	return emojis.length > 0 ? `📡 ${url} ${emojis.join("")}` : `📡 ${url}`;
+}
+
+// ---------------------------------------------------------------------------
+// Agent-enriched notification formatting
+//
+// These functions produce a two-part message:
+//   1. A concise summary (displayed in TUI via message renderer)
+//   2. A detailed section with full comment bodies, paths, and line numbers
+//      (included in agent content so the LLM doesn't need extra API calls)
+// ---------------------------------------------------------------------------
+
+/**
+ * Format a thread detail block for the agent, including full comment bodies,
+ * file path, line number, and all comments in the conversation.
+ */
+function formatThreadDetailBlock(thread: ThreadSummary): string {
+	const lines: string[] = [];
+	const location = thread.path
+		? `${thread.path}${thread.line != null ? `:${thread.line}` : ""}`
+		: undefined;
+
+	const header = location
+		? `Thread ${thread.id} (${location})`
+		: `Thread ${thread.id}`;
+	lines.push(header + ":");
+
+	if (thread.allComments && thread.allComments.length > 0) {
+		for (const c of thread.allComments) {
+			const cmtLocation = c.path
+				? ` (${c.path}${c.line != null ? `:${c.line}` : ""})`
+				: "";
+			lines.push(`  ${c.author}${cmtLocation} (id: ${c.id}): ${c.fullBody ?? c.body}`);
+		}
+	} else {
+		// Fallback: only last comment available
+		lines.push(`  ${thread.lastCommentAuthor}: ${thread.fullBody ?? thread.lastCommentBody}`);
+	}
+
+	return lines.join("\n");
+}
+
+/**
+ * Format a comment detail block for the agent, including full comment body.
+ */
+function formatCommentDetailBlock(comment: CommentSummary): string {
+	return `Comment ${comment.id} by ${comment.author}:\n  ${comment.fullBody ?? comment.body}`;
+}
+
+/**
+ * Format an enriched notification for the agent, including full comment bodies,
+ * file paths, and line numbers so the LLM can act without additional API calls.
+ *
+ * Returns an object with:
+ *   - concise: the short TUI-friendly summary (same as formatActionableItems)
+ *   - detailed: the full agent-facing content including structured details
+ */
+export function formatAgentNotification(status: PRStatus, config: MonitorConfig): { concise: string; detailed: string } | null {
+	const concise = formatActionableItems(status, config);
+	if (concise === null) return null;
+
+	const prLabel = `${config.owner}/${config.repo}#${config.number}`;
+	const detailLines: string[] = [];
+
+	// Thread detail blocks
+	const threadsWithDetails = (status.threadDetails ?? []).filter(t => !t.isResolved);
+	if (threadsWithDetails.length > 0) {
+		detailLines.push("");
+		detailLines.push("Review thread details:");
+		for (const thread of threadsWithDetails) {
+			detailLines.push(formatThreadDetailBlock(thread));
+		}
+	}
+
+	// General comment detail blocks
+	const commentsWithDetails = status.commentDetails ?? [];
+	if (commentsWithDetails.length > 0) {
+		detailLines.push("");
+		detailLines.push("General comment details:");
+		for (const c of commentsWithDetails) {
+			detailLines.push(formatCommentDetailBlock(c));
+		}
+	}
+
+	const detailed = detailLines.length > 0
+		? `${concise}\n${detailLines.join("\n")}`
+		: concise;
+
+	return { concise, detailed };
+}
+
+/**
+ * Format an enriched status update for the agent. Like formatStatusUpdate
+ * but appends detailed thread/comment information.
+ *
+ * Returns an object with:
+ *   - concise: the short TUI-friendly summary (same as formatStatusUpdate)
+ *   - detailed: the full agent-facing content including structured details
+ */
+export function formatAgentStatusUpdate(prev: PRStatus | null, curr: PRStatus, config: MonitorConfig): { concise: string; detailed: string } {
+	const concise = formatStatusUpdate(prev, curr, config);
+
+	// Only add detail blocks for new/changed items
+	const detailLines: string[] = [];
+
+	// Thread detail blocks for new threads
+	const prevThreadIds = new Set((prev?.threadDetails ?? []).map(t => t.id));
+	const newThreads = (curr.threadDetails ?? []).filter(t => !prevThreadIds.has(t.id) || !prev);
+	if (newThreads.length > 0) {
+		detailLines.push("");
+		detailLines.push("Review thread details:");
+		for (const thread of newThreads) {
+			detailLines.push(formatThreadDetailBlock(thread));
+		}
+	}
+
+	// General comment detail blocks for new comments
+	const prevCommentIds = new Set((prev?.commentDetails ?? []).map(c => c.id));
+	const newComments = (curr.commentDetails ?? []).filter(c => !prevCommentIds.has(c.id) || !prev);
+	if (newComments.length > 0) {
+		detailLines.push("");
+		detailLines.push("General comment details:");
+		for (const c of newComments) {
+			detailLines.push(formatCommentDetailBlock(c));
+		}
+	}
+
+	const detailed = detailLines.length > 0
+		? `${concise}\n${detailLines.join("\n")}`
+		: concise;
+
+	return { concise, detailed };
 }

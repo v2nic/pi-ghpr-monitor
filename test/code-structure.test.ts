@@ -46,9 +46,9 @@ describe("forceNotify fix", () => {
       src.indexOf("Periodic nudge")
     );
     expect(block).toContain("formatActionableItems(curr, config)");
-    expect(block).toContain(
-      "pi.sendUserMessage(msg, {deliverAs: \"steer\"})"
-    );
+    // After the enrichment feature, notifications use sendPRNotification
+    // instead of pi.sendUserMessage directly
+    expect(block).toContain("sendPRNotification(concMsg, detMsg, {deliverAs: \"steer\"})");
   });
 
   it("forceNotify block cleared after use", () => {
