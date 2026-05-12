@@ -82,14 +82,13 @@ export function isDebugEnabled(): boolean {
 /**
  * Log a message with a timestamp.
  * No-op when debug logging is not enabled.
+ * Only writes to the log file — never to the TUI.
  */
 export function log(message: string): void {
 	if (!logStream) return;
 	const timestamp = new Date().toISOString();
 	const line = `[${timestamp}] ${message}`;
 	logStream.write(line + "\n");
-	// Also write to stderr for visibility during debugging
-	process.stderr.write(`[ghpr-monitor] ${line}\n`);
 }
 
 /**
