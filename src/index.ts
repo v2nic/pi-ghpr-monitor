@@ -12,9 +12,11 @@
  * independent poll loop with its own state (backoff, status, reminders).
  */
 
-import type { ExtensionAPI, ExtensionUIContext } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI, ExtensionUIContext, MessageRenderer } from "@mariozechner/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
 import { StringEnum } from "@mariozechner/pi-ai";
+import * as path from "node:path";
+import { Text, Box } from "@mariozechner/pi-tui";
 import {
 	type PullRequestData,
 	type PRStatus,
@@ -23,7 +25,10 @@ import {
 	formatActionableItems,
 	formatStatusUpdate,
 	formatFooterStatus,
+	formatAgentNotification,
+	formatAgentStatusUpdate,
 } from "./analyzer";
+import { setSessionId, enableDebug, disableDebug, isDebugEnabled, closeLogger, log, logPRSnapshot, logStatus, getLogPath } from "./logger";
 
 // ---------------------------------------------------------------------------
 // GraphQL query (same as gh-pr-review's AWAIT_QUERY)
@@ -51,8 +56,7 @@ const AWAIT_QUERY = `query AwaitPR(
           id
           isResolved
           comments(last: $lastThreadComments) {
-            nodes { id body author { login } createdAt reactions(content: THUMBS_UP, first: 1) { nodes { content } } }
-          }
+            nodes { id body author { login } createdAt path line reactions(content: THUMBS_UP, first: 1) { nodes { content } } }
         }
       }
       mergeable
@@ -73,6 +77,15 @@ const AWAIT_QUERY = `query AwaitPR(
                     status
                   }
                 }
+              }
+            }
+            status {
+              state
+              contexts {
+                state
+                context
+                description
+                targetUrl
               }
             }
           }
@@ -144,7 +157,7 @@ async function fetchPRData(config: MonitorConfig, signal?: AbortSignal, mockBase
 		number: config.number,
 		lastComments: 25,
 		lastThreads: 25,
-		lastThreadComments: 1,
+		lastThreadComments: 25,
 		lastCheckSuites: 10,
 		lastCheckRuns: 10,
 	};
@@ -254,6 +267,8 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 	const monitors: Map<string, ActiveMonitor> = new Map();
 	let agentTurnActive = false;
 	let queuedUpdate: string | null = null;
+	let queuedForceCheck: string | null = null;
+	let queuedForceCheckDetailed: string | null = null;
 	let lastSentUpdate: string | null = null;
 	let uiCtx: ExtensionUIContext | undefined;
 	const MAX_BACKOFF_SEC = 300; // 5 minutes max rate-limit backoff
@@ -265,12 +280,40 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 
 	const STEERING_PROMPT = `You have access to the ghpr-monitor tool. When the user asks you to watch or monitor a PR, use ghpr-monitor with action "start" to begin monitoring. The tool has actions: start, status, check, and stop. Multiple PRs can be monitored simultaneously. Monitoring continues until the user stops it with /ghpr-monitor off (stops all) or /ghpr-monitor off <PR> (stops specific). The user can also run /ghpr-monitor check to trigger an immediate poll (all PRs or a specific one). You will receive PR status updates as notifications. The url parameter accepts GitHub PR URLs or shorthand like "owner/repo#123".`;
 
+	// Register a custom message renderer for "ghpr-monitor" messages.
+	// This renders only the concise summary in the TUI, while the agent
+	// receives the full content (including complete comment bodies, paths,
+	// and line numbers) via the CustomMessage content field.
+	pi.registerMessageRenderer<{ concise: string }>("ghpr-monitor", (message, _options, theme) => {
+		const concise = message.details?.concise ?? (typeof message.content === "string" ? message.content : "");
+		const box = new Box(1, 0, (t: string) => theme.bg("customMessageBg", t));
+		box.addChild(new Text(concise, 0, 0));
+		return box;
+	});
+
 	// Inject steering prompt so the LLM knows about the tool
 	pi.on("before_agent_start", async (event, _ctx) => {
 		return {
 			systemPrompt: event.systemPrompt + "\n\n" + STEERING_PROMPT,
 		};
 	});
+
+	// Store session ID for debug logging (activated on demand via /ghpr-monitor debug)
+	pi.on("session_start", async (_event, ctx) => {
+		const sessionFile = ctx.sessionManager.getSessionFile();
+		const id = sessionFile ? path.basename(sessionFile, path.extname(sessionFile)) : `ephemeral-${Date.now()}`;
+		setSessionId(id);
+	});
+
+	/** Send a PR status notification with enriched content for the agent and concise summary for the TUI. */
+	function sendPRNotification(concise: string, detailed: string, options?: { deliverAs?: "steer" | "followUp" }) {
+		pi.sendMessage({
+			customType: "ghpr-monitor",
+			content: detailed,
+			display: true,
+			details: { concise },
+		}, { deliverAs: options?.deliverAs ?? "steer" });
+	}
 
 	// Track agent turn state to avoid spamming updates while LLM is working
 	pi.on("turn_start", () => {
@@ -286,12 +329,22 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 		if (queuedUpdate !== null) {
 			const update = queuedUpdate;
 			queuedUpdate = null;
-			pi.sendUserMessage(update, { deliverAs: "steer" });
-			lastSentUpdate = update;
+			sendPRNotification(update, update, {deliverAs: "steer"});
 			lastSentUpdate = update;
 			// Mark all monitors that their reminders are superseded
 			for (const mon of monitors.values()) {
 				mon.lastSentReminder = null;
+			}
+		}
+		// Flush queued force-check result when turn ends
+		if (queuedForceCheck !== null) {
+			const concMsg = queuedForceCheck;
+			const detMsg = queuedForceCheckDetailed;
+			queuedForceCheck = null;
+			queuedForceCheckDetailed = null;
+			sendPRNotification(concMsg, detMsg ?? concMsg, {deliverAs: "steer"});
+			for (const mon of monitors.values()) {
+				mon.lastNudgeTime = Date.now();
 			}
 		}
 		// Schedule a reminder on next poll for each monitor with actionable items
@@ -311,7 +364,9 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 
 	// Clean up on session shutdown
 	pi.on("session_shutdown", async () => {
+		log("Session shutdown event received");
 		stopAllMonitors();
+		closeLogger();
 	});
 
 	// -----------------------------------------------------------------------
