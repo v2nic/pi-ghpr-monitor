@@ -12,6 +12,7 @@
 import type { ExtensionAPI, ExtensionUIContext } from "@mariozechner/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
 import { StringEnum } from "@mariozechner/pi-ai";
+import * as path from "node:path";
 import {
 	type PullRequestData,
 	type PRStatus,
@@ -21,6 +22,7 @@ import {
 	formatStatusUpdate,
 	formatFooterStatus,
 } from "./analyzer";
+import { setSessionId, enableDebug, disableDebug, isDebugEnabled, closeLogger, log, logPRSnapshot, logStatus, getLogPath } from "./logger";
 
 // ---------------------------------------------------------------------------
 // GraphQL query (same as gh-pr-review's AWAIT_QUERY)
@@ -243,6 +245,13 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 		};
 	});
 
+	// Store session ID for debug logging (activated on demand via /ghpr-monitor debug)
+	pi.on("session_start", async (_event, ctx) => {
+		const sessionFile = ctx.sessionManager.getSessionFile();
+		const id = sessionFile ? path.basename(sessionFile, path.extname(sessionFile)) : `ephemeral-${Date.now()}`;
+		setSessionId(id);
+	});
+
 	// Track agent turn state to avoid spamming updates while LLM is working
 	pi.on("turn_start", () => {
 		agentTurnActive = true;
@@ -280,10 +289,13 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 
 	// Clean up on session shutdown
 	pi.on("session_shutdown", async () => {
+		log("Session shutdown event received");
 		stopMonitor();
+		closeLogger();
 	});
 
 	function startMonitor(config: MonitorConfig): string {
+		log(`Starting monitor: ${config.owner}/${config.repo}#${config.number} (interval: ${config.intervalSec}s, mode: ${config.mode})`);
 		stopMonitor();
 
 		const controller = new AbortController();
@@ -328,6 +340,7 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 	}
 
 	function stopMonitor(): string {
+		log("Stopping monitor");
 		if (monitorState.status === "running") {
 			monitorState.controller.abort();
 			pollWakeResolve = null;
@@ -374,6 +387,8 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 
 			try {
 				const pr = await fetchPRData(config, signal, mockBaseUrl);
+				log(`Fetched PR data for ${config.owner}/${config.repo}#${config.number}`);
+				logPRSnapshot(pr);
 
 				// Check if PR was merged or closed
 				if (pr.state === "MERGED" || pr.state === "CLOSED") {
@@ -386,6 +401,7 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 				}
 
 				const curr = snapshotPR(pr);
+				logStatus(curr);
 				const update = formatStatusUpdate(lastStatus, curr, config);
 				const hadChange = update.length > 0;
 
@@ -424,7 +440,9 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 					const msg = items ?? `\u2705 No issues found on ${prUrl}`;
 					if (agentTurnActive) {
 						queuedForceCheck = msg;
+						log("Force-check queued (agent active)");
 					} else {
+						log(`Force-check result: ${items ? 'issues found' : 'no issues'} for ${prUrl}`);
 						pi.sendUserMessage(msg, {deliverAs: "steer"});
 						lastSentReminder = items;
 						lastNudgeTime = Date.now();
@@ -461,6 +479,7 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 			} catch (err) {
 				if (signal.aborted) return;
 				const errMsg = err instanceof Error ? err.message : String(err);
+				log(`Poll error: ${errMsg}`);
 				const isRateLimit = /rate limit/i.test(errMsg);
 				// Exponential backoff for ALL errors (rate limits, connection failures, etc.)
 				backoffSec = backoffSec === 0
@@ -525,9 +544,9 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 	// -----------------------------------------------------------------------
 
 	pi.registerCommand("ghpr-monitor", {
-		description: "Monitor a PR: /ghpr-monitor [PR URL] [message] — leave blank to let the agent figure it out, /ghpr-monitor check — check now, /ghpr-monitor off — stop",
+		description: "Monitor a PR: /ghpr-monitor [PR URL] [message] — leave blank to let the agent figure it out, /ghpr-monitor check — check now, /ghpr-monitor debug — toggle debug logging, /ghpr-monitor off — stop",
 		getArgumentCompletions: (prefix: string) => {
-			const completions = ["on", "off", "stop", "check", "https://github.com"];
+			const completions = ["on", "off", "stop", "check", "debug", "https://github.com"];
 			return completions.filter((c) => c.startsWith(prefix)).map((c) => ({ value: c, label: c }));
 		},
 		handler: async (args, ctx) => {
@@ -541,6 +560,22 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 				return;
 			}
 
+			if (lower === "debug" || lower === "debug on") {
+				const logFilePath = enableDebug();
+				ctx.ui.notify(`Debug logging enabled: ${logFilePath}`, "info");
+				return;
+			}
+
+			if (lower === "debug off") {
+				const formerPath = disableDebug();
+				if (formerPath) {
+					ctx.ui.notify(`Debug logging disabled. Log saved: ${formerPath}`, "info");
+			} else {
+					ctx.ui.notify("Debug logging was not active.", "info");
+				}
+				return;
+			}
+
 			if (lower === "check") {
 				if (monitorState.status !== "running") {
 					ctx.ui.notify("No monitor running. Start one first with /ghpr-monitor <PR URL>", "warning");
@@ -550,6 +585,7 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 				backoffSec = 0;
 				consecutiveNoChange = 0;
 				forceNotify = true;
+				log("Force check triggered via /ghpr-monitor command");
 				// Wake the poll loop immediately
 				if (pollWakeResolve) {
 					pollWakeResolve();
@@ -650,7 +686,7 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 			}
 
 			ctx.ui.notify(
-				"Usage:\n  /ghpr-monitor <PR URL> [message] — paste a GH PR URL\n  /ghpr-monitor owner/repo#123\n  /ghpr-monitor owner/repo <pr-number> [message]\n  /ghpr-monitor check — check now\n  /ghpr-monitor off — stop monitoring",
+				"Usage:\n  /ghpr-monitor <PR URL> [message] — paste a GH PR URL\n  /ghpr-monitor owner/repo#123\n  /ghpr-monitor owner/repo <pr-number> [message]\n  /ghpr-monitor check — check now\n  /ghpr-monitor debug — enable debug logging\n  /ghpr-monitor debug off — disable debug logging\n  /ghpr-monitor off — stop monitoring",
 				"info",
 			);
 		},
@@ -820,6 +856,7 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 					backoffSec = 0;
 					consecutiveNoChange = 0;
 					forceNotify = true;
+					log("Force check triggered via ghpr-monitor tool");
 					if (pollWakeResolve) {
 						pollWakeResolve();
 						pollWakeResolve = null;

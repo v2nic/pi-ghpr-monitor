@@ -337,7 +337,7 @@ export function formatStatusUpdate(prev: PRStatus | null, curr: PRStatus, config
 		if (threadLines) {
 			lines.push(threadLines);
 			lines.push("  After replying, resolve each thread: gh api graphql -f query='mutation{resolveReviewThread(input:{threadId:\"<id>\"}){thread{isResolved}}}'");
-			lines.push("  For non-actionable comments, add 👍 to stop notifications.");
+			lines.push("  React with 👍 on non-actionable comments to acknowledge and stop notifications.");
 		}
 	}
 
@@ -351,7 +351,7 @@ export function formatStatusUpdate(prev: PRStatus | null, curr: PRStatus, config
 		}
 		if (commentLines) {
 			lines.push(commentLines);
-			lines.push("  Add a 👍 reaction to a comment to acknowledge it and stop notifications.");
+			lines.push("  React with 👍 on a comment to acknowledge it and stop notifications.");
 		}
 	}
 
@@ -443,7 +443,7 @@ export function formatActionableItems(status: PRStatus, config: MonitorConfig): 
 		if (threadLines) {
 			lines.push(threadLines);
 			lines.push("  After replying, resolve each thread: gh api graphql -f query='mutation{resolveReviewThread(input:{threadId:\"<id>\"}){thread{isResolved}}}'");
-			lines.push("  For non-actionable comments, add 👍 to stop notifications.");
+			lines.push("  React with 👍 on non-actionable comments to acknowledge and stop notifications.");
 		}
 	}
 
@@ -452,7 +452,7 @@ export function formatActionableItems(status: PRStatus, config: MonitorConfig): 
 		const commentLines = formatCommentDetails(status.commentDetails ?? []);
 		if (commentLines) {
 			lines.push(commentLines);
-			lines.push("  Add a 👍 reaction to a comment to acknowledge it and stop notifications.");
+			lines.push("  React with 👍 on a comment to acknowledge it and stop notifications.");
 		}
 	}
 
