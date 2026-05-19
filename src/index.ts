@@ -374,6 +374,7 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 	// -----------------------------------------------------------------------
 
 	function startMonitor(config: MonitorConfig): { key: string; message: string; alreadyMonitoring?: boolean } {
+		log(\`Starting monitor: \${config.owner}/\${config.repo}#\${config.number} (interval: \${config.intervalSec}s, mode: \${config.mode})\`);
 		const key = prKey(config);
 
 		if (monitors.has(key)) {
@@ -407,6 +408,7 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 	}
 
 	function stopMonitorByKey(key: string): string {
+		log(`Stopping monitor: ${key}`);
 		const mon = monitors.get(key);
 		if (!mon) {
 			return `Not monitoring ${key}`;
@@ -420,6 +422,7 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 	}
 
 	function stopAllMonitors(): string {
+		log("Stopping all monitors");
 		if (monitors.size === 0) {
 			return "No monitors running";
 		}
@@ -486,13 +489,15 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 
 			try {
 				const pr = await fetchPRData(config, signal, mockBaseUrl);
+				log(`Fetched PR data for ${config.owner}/${config.repo}#${config.number}`);
+				logPRSnapshot(pr);
 
 				// Check if PR was merged or closed
 				if (pr.state === "MERGED" || pr.state === "CLOSED") {
 					const prUrl = `https://${config.host}/${config.owner}/${config.repo}/pull/${config.number}`;
 					const reason = pr.merged ? "merged" : "closed";
 					const msg = `${pr.merged ? "🔀" : "❌"} PR ${prUrl} was ${reason}. Monitoring stopped.`;
-					pi.sendUserMessage(msg, { deliverAs: "steer" });
+					sendPRNotification(msg, msg, {deliverAs: "steer"});
 					const key = prKey(config);
 					monitors.delete(key);
 					updateFooter();
@@ -509,7 +514,7 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 						queuedUpdate = update;
 					} else if (update !== lastSentUpdate) {
 						// Only send if something changed since last update
-						pi.sendUserMessage(update, { deliverAs: "steer" });
+						const { concise: concUpdate, detailed: detUpdate } = formatAgentStatusUpdate(mon.lastStatus, curr, config); sendPRNotification(concUpdate, detUpdate, {deliverAs: "steer"});
 						lastSentUpdate = update;
 						mon.lastSentUpdate = update;
 						mon.lastSentReminder = null; // real update supersedes any prior reminder
@@ -521,7 +526,7 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 				if (mon.needsReminder && !agentTurnActive) {
 					const reminder = formatActionableItems(curr, config);
 					if (reminder && reminder !== mon.lastSentReminder) {
-						pi.sendUserMessage(reminder, { deliverAs: "steer" });
+						const detReminder = formatAgentNotification(curr, config); sendPRNotification(reminder, detReminder ?? reminder, {deliverAs: "steer"});
 						mon.lastSentReminder = reminder;
 						mon.lastNudgeTime = Date.now();
 					}
@@ -532,8 +537,15 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 				if (mon.forceNotify && !agentTurnActive) {
 					const prUrl = `https://${config.host}/${config.owner}/${config.repo}/pull/${config.number}`;
 					const items = formatActionableItems(curr, config);
+					const detItems = formatAgentNotification(curr, config);
 					const msg = items ?? `\u2705 No issues found on ${prUrl}`;
-					pi.sendUserMessage(msg, { deliverAs: "steer" });
+					const detMsg = detItems ?? `\u2705 No issues found on ${prUrl}`;
+					if (agentTurnActive) {
+						queuedForceCheck = msg;
+						queuedForceCheckDetailed = detMsg;
+					} else {
+						sendPRNotification(msg, detMsg, {deliverAs: "steer"});
+					}
 					mon.lastSentReminder = items;
 					mon.lastNudgeTime = Date.now();
 					mon.forceNotify = false;
@@ -547,8 +559,9 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 					Date.now() - mon.lastNudgeTime >= NUDGE_COOLDOWN_MS
 				) {
 					const nudge = formatActionableItems(curr, config);
+					const detNudge = formatAgentNotification(curr, config);
 					if (nudge) {
-						pi.sendUserMessage(nudge, { deliverAs: "steer" });
+						sendPRNotification(nudge, detNudge ?? nudge, {deliverAs: "steer"});
 						mon.lastSentReminder = nudge;
 						mon.lastNudgeTime = Date.now();
 					}

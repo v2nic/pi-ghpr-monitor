@@ -109,13 +109,15 @@ describe("forceNotify fix", () => {
 		expect(src).toContain("mon.forceNotify = true");
 	});
 
-	it("forceNotify block sends actionable items or all-clear", () => {
+	it("forceNotify block sends actionable items or all-clear via enriched notification", () => {
 		const block = src.slice(
 			src.indexOf("if (mon.forceNotify && !agentTurnActive)"),
 			src.indexOf("Periodic nudge"),
 		);
 		expect(block).toContain("formatActionableItems(curr, config)");
-		expect(block).toContain("pi.sendUserMessage(msg, { deliverAs:");
+		expect(block).toContain("formatAgentNotification(curr, config)");
+		expect(block).toContain("sendPRNotification");
+		expect(block).toContain("queuedForceCheck");
 	});
 
 	it("forceNotify block cleared after use", () => {
