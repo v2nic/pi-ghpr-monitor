@@ -23,6 +23,8 @@ jobs:
   integration-test:
     runs-on: ubuntu-latest
     needs: test
+    permissions:
+      checks: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -48,3 +50,31 @@ jobs:
           name: tmux-screenshots
           path: test/integration/screenshots/
           retention-days: 30
+
+      - name: Create tmux screenshots check report
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const reportPath = '${{ github.workspace }}/test/integration/screenshots/screenshots-report.md';
+            let report = '';
+            let conclusion = 'success';
+            try {
+              report = fs.readFileSync(reportPath, 'utf8');
+            } catch {
+              report = '⚠️ No screenshot report found. The integration test may have failed before generating it.';
+              conclusion = 'failure';
+            }
+            await github.rest.checks.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              name: 'Tmux Screenshots',
+              head_sha: context.sha,
+              status: 'completed',
+              conclusion: conclusion,
+              output: {
+                title: 'Tmux Screenshots',
+                summary: report,
+              },
+            });

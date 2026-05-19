@@ -317,6 +317,56 @@ function tmuxSend(tmuxSession, command) {
 }
 
 // ---------------------------------------------------------------------------
+// Report generation
+// ---------------------------------------------------------------------------
+
+/**
+ * Friendly labels for each screenshot scenario.
+ * Keyed by the filename stem (without .txt).
+ */
+const SCENARIO_LABELS = {
+	"01-extension-loaded": "Extension loaded",
+	"02-start-monitoring-url": "Start monitoring (URL)",
+	"02-start-monitoring": "Start monitoring (shorthand)",
+	"03-start-monitoring-short": "Start monitoring (shorthand)",
+	"03-initial-pr-status": "Initial PR status – pending CI & unresolved threads",
+	"04-new-comment-arrived": "New review comment arrives",
+	"05-ci-failing": "CI check fails",
+	"06-merge-conflicts": "Merge conflicts detected",
+	"07-all-resolved": "All issues resolved",
+	"08-stop-monitoring": "Stop monitoring",
+	"09-status-display": "Final status display",
+	"10-error-handling": "Error handling",
+	"11-summary": "Summary",
+};
+
+/**
+ * Build a Markdown report from the captured screenshot .txt files.
+ * Returns the report string.
+ */
+function buildScreenshotReport(files) {
+	const lines = [];
+	lines.push("# Tmux Screenshots");
+	lines.push("");
+	lines.push("Integration test scenarios captured from a tmux session.");
+	lines.push("");
+
+	for (const f of files) {
+		const stem = f.replace(/\.txt$/, "");
+		const label = SCENARIO_LABELS[stem] || stem;
+		const content = fs.readFileSync(path.join(SCREENSHOT_DIR, f), "utf-8").trimEnd();
+		lines.push(`### ${label}`);
+		lines.push("");
+		lines.push("```term");
+		lines.push(content);
+		lines.push("```");
+		lines.push("");
+	}
+
+	return lines.join("\n");
+}
+
+// ---------------------------------------------------------------------------
 // Main test runner
 // ---------------------------------------------------------------------------
 
@@ -452,11 +502,24 @@ async function main() {
 	llmServer.close();
 
 	console.log(`\n✅ Integration test complete! Screenshots saved to: ${SCREENSHOT_DIR}`);
-	console.log("\nScreenshots captured:");
 	const files = fs.readdirSync(SCREENSHOT_DIR).filter((f) => f.endsWith(".txt")).sort();
+	console.log("\nScreenshots captured:");
 	for (const f of files) {
 		const size = fs.statSync(path.join(SCREENSHOT_DIR, f)).size;
 		console.log(`  ${f} (${size} bytes)`);
+	}
+
+	// Generate markdown report for CI
+	const report = buildScreenshotReport(files);
+	const reportPath = path.join(SCREENSHOT_DIR, "screenshots-report.md");
+	fs.writeFileSync(reportPath, report + "\n");
+	console.log(`\n📄 Screenshot report written to: ${reportPath}`);
+	
+	// Also write the report to GITHUB_STEP_SUMMARY if running in CI
+	const stepSummary = process.env.GITHUB_STEP_SUMMARY;
+	if (stepSummary) {
+		fs.appendFileSync(stepSummary, report + "\n");
+		console.log("📄 Report appended to GITHUB_STEP_SUMMARY");
 	}
 }
 
