@@ -121,7 +121,7 @@ describe("pollLoop error handler cleanup", () => {
     // stopMonitor() is the reference implementation for proper cleanup.
     // It resets: monitorState, lastStatus, lastStatusTimestamp, lastSentUpdate,
     // lastSentReminder, lastNudgeTime, needsReminder, forceNotify,
-    // queuedForceCheck, consecutiveNoChange, and calls updateFooter().
+    // queuedForceCheck, consecutiveNoChange, inErrorBackoff, and calls updateFooter().
     const stopFn = src.slice(
       src.indexOf("function stopMonitor"),
       src.indexOf("async function pollLoop")
@@ -135,6 +135,69 @@ describe("pollLoop error handler cleanup", () => {
     expect(stopFn).toContain("forceNotify = false");
     expect(stopFn).toContain("queuedForceCheck = null");
     expect(stopFn).toContain("consecutiveNoChange = 0");
+    expect(stopFn).toContain("inErrorBackoff = false");
     expect(stopFn).toContain("updateFooter()");
+  });
+});
+
+describe("backoff bypass fix", () => {
+  it("declares inErrorBackoff flag", () => {
+    expect(src).toContain("let inErrorBackoff = false;");
+  });
+
+  it("sets inErrorBackoff = true in pollLoop catch block", () => {
+    const catchBlock = src.slice(
+      src.indexOf("backoffSec = backoffSec === 0"),
+      src.indexOf("pi.sendMessage", src.indexOf("backoffSec = backoffSec === 0"))
+    );
+    expect(catchBlock).toContain("inErrorBackoff = true");
+  });
+
+  it("sets inErrorBackoff = false on successful poll", () => {
+    // After a successful poll, backoffSec = 0 and inErrorBackoff = false
+    const successBlock = src.slice(
+      src.indexOf("backoffSec = 0;"),
+      src.indexOf("updateFooter();", src.indexOf("backoffSec = 0;"))
+    );
+    expect(successBlock).toContain("inErrorBackoff = false");
+  });
+
+  it("turn_end does NOT wake poll loop during error backoff", () => {
+    const turnEndBlock = src.slice(
+      src.indexOf('pi.on("turn_end"'),
+      src.indexOf('pi.on("session_shutdown"')
+    );
+    // The wake must be gated on !inErrorBackoff
+    expect(turnEndBlock).toContain("inErrorBackoff");
+    // Must use && !inErrorBackoff, not just inErrorBackoff
+    expect(turnEndBlock).toMatch(/pollWakeResolve\s*&&\s*!inErrorBackoff/);
+  });
+
+  it("error backoff wait respects backoffSec over idle slowdown", () => {
+    // When inErrorBackoff, the wait must be at least backoffSec.
+    // The idle slowdown (consecutiveNoChange > 3) should NOT override
+    // the backoff delay.
+    const waitBlock = src.slice(
+      src.indexOf("// After 3 consecutive no-change polls"),
+      src.indexOf("const waitSec = agentTurnActive", src.indexOf("// After 3 consecutive"))
+    );
+    expect(waitBlock).toContain("inErrorBackoff");
+    expect(waitBlock).toContain("Math.max(idleSlowdown, baseSec)");
+  });
+
+  it("resets inErrorBackoff on /ghpr-monitor check", () => {
+    const checkBlock = src.slice(
+      src.indexOf('if (lower === "check")'),
+      src.indexOf('if (lower === "on"', src.indexOf('if (lower === "check")'))
+    );
+    expect(checkBlock).toContain("inErrorBackoff = false");
+  });
+
+  it("resets inErrorBackoff on tool check action", () => {
+    const toolCheckBlock = src.slice(
+      src.indexOf('case "check":'),
+      src.indexOf('default:', src.indexOf('case "check":'))
+    );
+    expect(toolCheckBlock).toContain("inErrorBackoff = false");
   });
 });
