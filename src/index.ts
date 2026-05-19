@@ -9,10 +9,11 @@
  * injects notifications into the agent session so the LLM can take action.
  */
 
-import type { ExtensionAPI, ExtensionUIContext } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI, ExtensionUIContext, MessageRenderer } from "@mariozechner/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
 import { StringEnum } from "@mariozechner/pi-ai";
 import * as path from "node:path";
+import { Text, Box } from "@mariozechner/pi-tui";
 import {
 	type PullRequestData,
 	type PRStatus,
@@ -21,6 +22,8 @@ import {
 	formatActionableItems,
 	formatStatusUpdate,
 	formatFooterStatus,
+	formatAgentNotification,
+	formatAgentStatusUpdate,
 } from "./analyzer";
 import { setSessionId, enableDebug, disableDebug, isDebugEnabled, closeLogger, log, logPRSnapshot, logStatus, getLogPath } from "./logger";
 
@@ -50,7 +53,7 @@ const AWAIT_QUERY = `query AwaitPR(
           id
           isResolved
           comments(last: $lastThreadComments) {
-            nodes { id body author { login } createdAt reactions(content: THUMBS_UP, first: 1) { nodes { content } } }
+            nodes { id body author { login } createdAt path line reactions(content: THUMBS_UP, first: 1) { nodes { content } } }
           }
         }
       }
@@ -152,7 +155,7 @@ async function fetchPRData(config: MonitorConfig, signal?: AbortSignal, mockBase
 		number: config.number,
 		lastComments: 25,
 		lastThreads: 25,
-		lastThreadComments: 1,
+		lastThreadComments: 25,
 		lastCheckSuites: 10,
 		lastCheckRuns: 10,
 	};
@@ -219,6 +222,7 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 	let agentTurnActive = false;
 	let queuedUpdate: string | null = null;
 	let queuedForceCheck: string | null = null;
+	let queuedForceCheckDetailed: string | null = null;
 	let lastSentUpdate: string | null = null;
 	let lastSentReminder: string | null = null;
 	let needsReminder = false;
@@ -235,7 +239,18 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 	// For testing: allows pointing at a mock server
 	let mockBaseUrl: string | undefined;
 
-	const STEERING_PROMPT = `You have access to the ghpr-monitor tool. When the user asks you to watch or monitor a PR, use ghpr-monitor with action "start" to begin monitoring. The tool has actions: start and status. Monitoring continues until the user stops it with /ghpr-monitor off. The user can also run /ghpr-monitor check to trigger an immediate poll. You will receive PR status updates as notifications. The url parameter accepts GitHub PR URLs or shorthand like "owner/repo#123".`;
+	const STEERING_PROMPT = `You have access to the ghpr-monitor tool. When the user asks you to watch or monitor a PR, use ghpr-monitor with action "start" to begin monitoring. The tool has actions: start and status. Monitoring continues until the user stops it with /ghpr-monitor off. The user can also run /ghpr-monitor check to trigger an immediate poll. You will receive PR status updates as notifications with full comment details (body, file path, line number) so you can act on them without additional API calls. The url parameter accepts GitHub PR URLs or shorthand like "owner/repo#123".`;
+
+	// Register a custom message renderer for "ghpr-monitor" messages.
+	// This renders only the concise summary in the TUI, while the agent
+	// receives the full content (including complete comment bodies, paths,
+	// and line numbers) via the CustomMessage content field.
+	pi.registerMessageRenderer<{ concise: string }>("ghpr-monitor", (message, _options, theme) => {
+		const concise = message.details?.concise ?? (typeof message.content === "string" ? message.content : "");
+		const box = new Box(1, 0, (t: string) => theme.bg("customMessageBg", t));
+		box.addChild(new Text(concise, 0, 0));
+		return box;
+	});
 
 	// Inject steering prompt when monitor is idle (so the LLM knows about the tool)
 	pi.on("before_agent_start", async (event, _ctx) => {
@@ -252,6 +267,16 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 		setSessionId(id);
 	});
 
+	/** Send a PR status notification with enriched content for the agent and concise summary for the TUI. */
+	function sendPRNotification(concise: string, detailed: string, options?: { deliverAs?: "steer" | "followUp" }) {
+		pi.sendMessage({
+			customType: "ghpr-monitor",
+			content: detailed,
+			display: true,
+			details: { concise },
+		}, { deliverAs: options?.deliverAs ?? "steer" });
+	}
+
 	// Track agent turn state to avoid spamming updates while LLM is working
 	pi.on("turn_start", () => {
 		agentTurnActive = true;
@@ -264,16 +289,19 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 		if (queuedUpdate !== null) {
 			const update = queuedUpdate;
 			queuedUpdate = null;
-		pi.sendUserMessage(update, {deliverAs: "steer"});
+			sendPRNotification(update, update, {deliverAs: "steer"});
 			lastSentUpdate = update;
 			lastSentReminder = null; // real update supersedes any prior reminder
 			lastNudgeTime = Date.now();
 		}
 		// Flush queued force-check result when turn ends
 		if (queuedForceCheck !== null) {
-			const msg = queuedForceCheck;
+			const concMsg = queuedForceCheck;
+			const detMsg = queuedForceCheckDetailed;
 			queuedForceCheck = null;
-			pi.sendUserMessage(msg, {deliverAs: "steer"});
+		queuedForceCheckDetailed = null;
+			queuedForceCheckDetailed = null;
+			sendPRNotification(concMsg, detMsg ?? concMsg, {deliverAs: "steer"});
 			lastNudgeTime = Date.now();
 		}
 		// Schedule a reminder on next poll if actionable items remain
@@ -323,6 +351,7 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 			needsReminder = false;
 			forceNotify = false;
 			queuedForceCheck = null;
+		queuedForceCheckDetailed = null;
 			consecutiveNoChange = 0;
 			updateFooter();
 		});
@@ -354,6 +383,7 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 			needsReminder = false;
 			forceNotify = false;
 			queuedForceCheck = null;
+		queuedForceCheckDetailed = null;
 			consecutiveNoChange = 0;
 			updateFooter();
 			return `Stopped monitoring https://${config.host}/${config.owner}/${config.repo}/pull/${config.number}`;
@@ -367,6 +397,7 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 		needsReminder = false;
 		forceNotify = false;
 		queuedForceCheck = null;
+		queuedForceCheckDetailed = null;
 		consecutiveNoChange = 0;
 		updateFooter();
 		return "No monitor running";
@@ -395,7 +426,7 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 					const prUrl = `https://${config.host}/${config.owner}/${config.repo}/pull/${config.number}`;
 					const reason = pr.merged ? "merged" : "closed";
 					const msg = `${pr.merged ? "🔀" : "❌"} PR ${prUrl} was ${reason}. Monitoring stopped.`;
-					pi.sendUserMessage(msg, {deliverAs: "steer"});
+					sendPRNotification(msg, msg, {deliverAs: "steer"});
 					stopMonitor();
 					return;
 				}
@@ -411,8 +442,9 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 						queuedUpdate = update;
 					} else if (update !== lastSentUpdate) {
 						// Only send if something changed since last update
-						pi.sendUserMessage(update, {deliverAs: "steer"});
-						lastSentUpdate = update;
+						const { concise: concUpdate, detailed: detUpdate } = formatAgentStatusUpdate(lastStatus, curr, config);
+						sendPRNotification(concUpdate, detUpdate, {deliverAs: "steer"});
+						lastSentUpdate = concUpdate;
 						lastSentReminder = null; // real update supersedes any prior reminder
 						lastNudgeTime = Date.now();
 					}
@@ -423,8 +455,10 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 				// to avoid spamming the agent with identical reminders during active work
 				if (needsReminder && !agentTurnActive) {
 					const reminder = formatActionableItems(curr, config);
+					const agentReminder = formatAgentNotification(curr, config);
 					if (reminder && reminder !== lastSentReminder) {
-						pi.sendUserMessage(reminder, {deliverAs: "steer"});
+						const detReminder = agentReminder?.detailed ?? reminder;
+						sendPRNotification(reminder, detReminder, {deliverAs: "steer"});
 						lastSentReminder = reminder;
 						lastNudgeTime = Date.now();
 					}
@@ -437,13 +471,16 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 				if (forceNotify) {
 					const prUrl = `https://${config.host}/${config.owner}/${config.repo}/pull/${config.number}`;
 					const items = formatActionableItems(curr, config);
-					const msg = items ?? `\u2705 No issues found on ${prUrl}`;
+					const agentItems = formatAgentNotification(curr, config);
+					const concMsg = items ?? `u2705 No issues found on ${prUrl}`;
+					const detMsg = agentItems?.detailed ?? concMsg;
 					if (agentTurnActive) {
-						queuedForceCheck = msg;
+						queuedForceCheck = concMsg;
+						queuedForceCheckDetailed = detMsg;
 						log("Force-check queued (agent active)");
 					} else {
-						log(`Force-check result: ${items ? 'issues found' : 'no issues'} for ${prUrl}`);
-						pi.sendUserMessage(msg, {deliverAs: "steer"});
+						log(`Force-check result: ${items ? "issues found" : "no issues"} for ${prUrl}`);
+						sendPRNotification(concMsg, detMsg, {deliverAs: "steer"});
 						lastSentReminder = items;
 						lastNudgeTime = Date.now();
 					}
@@ -460,8 +497,10 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 					Date.now() - lastNudgeTime >= NUDGE_COOLDOWN_MS
 				) {
 					const nudge = formatActionableItems(curr, config);
+					const agentNudge = formatAgentNotification(curr, config);
 					if (nudge) {
-						pi.sendUserMessage(nudge, {deliverAs: "steer"});
+						const detNudge = agentNudge?.detailed ?? nudge;
+						sendPRNotification(nudge, detNudge, {deliverAs: "steer"});
 						lastSentReminder = nudge;
 						lastNudgeTime = Date.now();
 					}
