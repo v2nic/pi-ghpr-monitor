@@ -367,8 +367,8 @@ function drawPiScreen(tmuxSession, parts) {
 		lines.push(` ${parts.monitorLine}`);
 	}
 
-	// Write to temp file and display in tmux
-	const tmpFile = path.join(SCREENSHOT_DIR, ".pi-screen.txt");
+	// Write to temp file in /tmp (outside SCREENSHOT_DIR) and display in tmux
+	const tmpFile = path.join("/tmp", ".pi-screen.txt");
 	fs.writeFileSync(tmpFile, lines.join("\n") + "\n");
 	const safePath = tmpFile.replace(/'/g, `'"'"'`);
 	execSync(`tmux send-keys -t ${tmuxSession} "clear && cat '${safePath}'" Enter`, { encoding: "utf-8", shell: "/bin/bash" });
@@ -409,7 +409,9 @@ function captureScreenshot(tmuxSession, name) {
 	const outFile = path.join(SCREENSHOT_DIR, `${name}.txt`);
 	try {
 		const output = execSync(`tmux capture-pane -t ${tmuxSession} -p -S -100`, { encoding: "utf-8" });
-		fs.writeFileSync(outFile, output);
+		// Remove trailing blank lines
+		const trimmed = output.replace(/\n+$/, "").trimEnd() + "\n";
+		fs.writeFileSync(outFile, trimmed);
 		console.log(`  📸 Screenshot saved: ${name}.txt`);
 	} catch (err) {
 		console.error(`  ⚠️  Failed to capture screenshot: ${err.message}`);
@@ -470,9 +472,9 @@ function buildScreenshotReport(files) {
 async function main() {
 	fs.mkdirSync(SCREENSHOT_DIR, { recursive: true });
 
-	// Remove stale .txt files from previous runs so only fresh captures remain
+	// Remove stale files from previous runs so only fresh captures remain
 	for (const f of fs.readdirSync(SCREENSHOT_DIR)) {
-		if (f.endsWith(".txt")) {
+		if (f !== ".gitignore") {
 			fs.unlinkSync(path.join(SCREENSHOT_DIR, f));
 		}
 	}
@@ -495,6 +497,10 @@ async function main() {
 	execSync(`tmux new-session -d -s ${SESSION} -x 120 -y 40`);
 
 	await new Promise((r) => setTimeout(r, 500));
+
+	// Set minimal shell prompt so screenshots look like Pi TUI, not bash
+	execSync(`tmux send-keys -t ${SESSION} "unset PROMPT_COMMAND; PS1=''" Enter`, { encoding: "utf-8", shell: "/bin/bash" });
+	execSync("sleep 0.3");
 
 	// -------------------------------------------------------------------
 	// SCENARIO 1: Extension loaded – Pi startup screen
