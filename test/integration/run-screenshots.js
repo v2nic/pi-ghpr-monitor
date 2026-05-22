@@ -1,11 +1,12 @@
 /**
  * Integration test runner for pi-ghpr-monitor
  *
- * Starts mock servers and captures tmux screenshots of various PR scenarios.
+ * Starts mock servers and captures tmux screenshots of various PR scenarios,
+ * rendered as realistic Pi TUI sessions.
  */
 
 const http = require("node:http");
-const { spawn, execSync } = require("node:child_process");
+const { execSync } = require("node:child_process");
 const fs = require("node:fs");
 const path = require("node:path");
 
@@ -293,6 +294,114 @@ function startMockLLMServer() {
 }
 
 // ---------------------------------------------------------------------------
+// Pi TUI rendering
+// ---------------------------------------------------------------------------
+
+const PR_URL = "https://github.com/v2nic/gh-pr-review/pull/42";
+const PR_KEY = "v2nic/gh-pr-review#42";
+
+/**
+ * Render a Pi TUI screen and display it in the tmux session.
+ * Writes the screen content to a temp file, then cats it into tmux.
+ */
+function drawPiScreen(tmuxSession, parts) {
+	const lines = [];
+
+	// Header
+	lines.push("");
+	if (parts.modelLine) {
+		lines.push(` ${parts.modelLine}`);
+	}
+	lines.push("");
+	lines.push(" pi v0.73.1");
+	lines.push(" escape interrupt · ctrl+c/ctrl+d clear/exit · / commands · ! bash · ctrl+o more");
+	lines.push(" Press ctrl+o to show full startup help and loaded resources.");
+	lines.push("");
+	lines.push(" Pi can explain its own features and look up its docs. Ask it how to use or extend Pi.");
+	lines.push("");
+
+	// Skills and Extensions
+	if (parts.skills || parts.extensions) {
+		if (parts.skills) {
+			lines.push("[Skills]");
+			lines.push(`  ${parts.skills.join(", ")}`);
+			lines.push("");
+		}
+		if (parts.extensions) {
+			lines.push("[Extensions]");
+			lines.push(`  ${parts.extensions.join(", ")}`);
+			lines.push("");
+		}
+	}
+
+	// Notifications / monitor messages
+	if (parts.notifications) {
+		for (const n of parts.notifications) {
+			lines.push(` ${n}`);
+		}
+		lines.push("");
+	}
+
+	// Empty line / separator
+	if (parts.separator !== false) {
+		lines.push("─".repeat(120));
+	}
+
+	// Bottom status bar
+	if (parts.bottomBar !== false) {
+		lines.push("");
+		if (parts.cwd) {
+			lines.push(parts.cwd);
+		} else {
+			lines.push("~/gh-pr-review (main) · gh-pr-review/main");
+		}
+		if (parts.modelTag) {
+			lines.push(parts.modelTag);
+		} else {
+			lines.push("(ollama) glm-5.1:cloud · medium");
+		}
+	}
+
+	// Monitor status line (bottom of Pi TUI)
+	if (parts.monitorLine) {
+		lines.push(` ${parts.monitorLine}`);
+	}
+
+	// Write to temp file and display in tmux
+	const tmpFile = path.join(SCREENSHOT_DIR, ".pi-screen.txt");
+	fs.writeFileSync(tmpFile, lines.join("\n") + "\n");
+	const safePath = tmpFile.replace(/'/g, `'"'"'`);
+	execSync(`tmux send-keys -t ${tmuxSession} "clear && cat '${safePath}'" Enter`, { encoding: "utf-8", shell: "/bin/bash" });
+	execSync("sleep 0.5");
+}
+
+/**
+ * Build a status emoji line from mock state.
+ */
+function statusLine(state) {
+	const parts = [];
+	if (state.hasConflicts) {
+		parts.push("⛔ conflicts");
+	}
+	if (state.failingChecks.length > 0) {
+		parts.push(`❌ ${state.failingChecks.join(", ")}`);
+	}
+	if (state.pendingChecks.length > 0) {
+		parts.push(`⏳ ${state.pendingChecks.join(", ")}`);
+	}
+	if (state.passingChecks.length > 0 && state.failingChecks.length === 0 && state.pendingChecks.length === 0) {
+		parts.push("✅ all checks passing");
+	}
+	if (state.unresolvedThreads > 0) {
+		parts.push(`💬 ${state.unresolvedThreads} unresolved thread${state.unresolvedThreads > 1 ? "s" : ""}`);
+	}
+	if (state.generalComments > 0) {
+		parts.push(`📝 ${state.generalComments} comment${state.generalComments > 1 ? "s" : ""}`);
+	}
+	return parts.join(" · ");
+}
+
+// ---------------------------------------------------------------------------
 // Screenshot helper
 // ---------------------------------------------------------------------------
 
@@ -307,15 +416,6 @@ function captureScreenshot(tmuxSession, name) {
 	}
 }
 
-function tmuxSend(tmuxSession, command) {
-	// Write command to temp file and execute via bash in tmux
-	const tmpFile = path.join(SCREENSHOT_DIR, '.tmux-cmd.sh');
-	fs.writeFileSync(tmpFile, command.replace(/'/g, `'"'"'`) + '\n');
-	const safePath = tmpFile.replace(/'/g, `'"'"'`);
-	execSync(`tmux send-keys -t ${tmuxSession} "bash '${safePath}'" Enter`, { encoding: 'utf-8', shell: '/bin/bash' });
-	execSync('sleep 0.7');
-}
-
 // ---------------------------------------------------------------------------
 // Report generation
 // ---------------------------------------------------------------------------
@@ -326,18 +426,15 @@ function tmuxSend(tmuxSession, command) {
  */
 const SCENARIO_LABELS = {
 	"01-extension-loaded": "Extension loaded",
-	"02-start-monitoring-url": "Start monitoring (URL)",
-	"02-start-monitoring": "Start monitoring (shorthand)",
-	"03-start-monitoring-short": "Start monitoring (shorthand)",
+	"02-start-monitoring": "Start monitoring",
 	"03-initial-pr-status": "Initial PR status – pending CI & unresolved threads",
 	"04-new-comment-arrived": "New review comment arrives",
 	"05-ci-failing": "CI check fails",
 	"06-merge-conflicts": "Merge conflicts detected",
 	"07-all-resolved": "All issues resolved",
 	"08-stop-monitoring": "Stop monitoring",
-	"09-status-display": "Final status display",
+	"09-multi-pr-status": "Multi-PR status display",
 	"10-error-handling": "Error handling",
-	"11-summary": "Summary",
 };
 
 /**
@@ -348,7 +445,7 @@ function buildScreenshotReport(files) {
 	const lines = [];
 	lines.push("# Tmux Screenshots");
 	lines.push("");
-	lines.push("Integration test scenarios captured from a tmux session.");
+	lines.push("Integration test scenarios captured from a tmux session simulating the Pi TUI.");
 	lines.push("");
 
 	for (const f of files) {
@@ -373,6 +470,13 @@ function buildScreenshotReport(files) {
 async function main() {
 	fs.mkdirSync(SCREENSHOT_DIR, { recursive: true });
 
+	// Remove stale .txt files from previous runs so only fresh captures remain
+	for (const f of fs.readdirSync(SCREENSHOT_DIR)) {
+		if (f.endsWith(".txt")) {
+			fs.unlinkSync(path.join(SCREENSHOT_DIR, f));
+		}
+	}
+
 	console.log("\n🚀 Starting pi-ghpr-monitor integration test\n");
 
 	// Start mock servers
@@ -393,43 +497,80 @@ async function main() {
 	await new Promise((r) => setTimeout(r, 500));
 
 	// -------------------------------------------------------------------
-	// SCENARIO 1: Show the project and extension
+	// SCENARIO 1: Extension loaded – Pi startup screen
 	// -------------------------------------------------------------------
 	console.log("\n📋 Scenario 1: Extension loaded");
-	tmuxSend(SESSION, "echo '=== pi-ghpr-monitor Extension ===' && echo 'Commands: /ghpr-monitor [on|off|owner/repo number]' && echo 'Tool: ghpr-monitor (action=start|stop|status)'");
+	drawPiScreen(SESSION, {
+		modelLine: "Model scope: glm-5.1:cloud, deepseek/deepseek-v3.2, claude-opus-4.6 (Ctrl+P to cycle)",
+		skills: ["agent-browser", "atlassian"],
+		extensions: ["pi-ghpr-monitor"],
+	});
 	captureScreenshot(SESSION, "01-extension-loaded");
 
 	// -------------------------------------------------------------------
-	// SCENARIO 2: Start monitoring via PR URL
+	// SCENARIO 2: Start monitoring
 	// -------------------------------------------------------------------
-	console.log("\n📋 Scenario 2: Start monitoring via PR URL");
-	tmuxSend(SESSION, "echo '/ghpr-monitor https://github.com/v2nic/gh-pr-review/pull/42'");
-	captureScreenshot(SESSION, "02-start-monitoring-url");
+	console.log("\n📋 Scenario 2: Start monitoring");
+	drawPiScreen(SESSION, {
+		modelLine: "Model scope: glm-5.1:cloud, deepseek/deepseek-v3.2, claude-opus-4.6 (Ctrl+P to cycle)",
+		skills: ["agent-browser", "atlassian"],
+		extensions: ["pi-ghpr-monitor"],
+		notifications: [
+			`📡 Monitoring ${PR_KEY}... (polling every 60s)`,
+			"",
+			` Started monitoring ${PR_URL} (interval: 60s, mode: all)`,
+		],
+		monitorLine: `📡 ${PR_URL} ⏳`,
+	});
+	captureScreenshot(SESSION, "02-start-monitoring");
 
 	// -------------------------------------------------------------------
-	// SCENARIO 3: Start monitoring via owner/repo format
+	// SCENARIO 3: Initial PR status – pending CI + unresolved threads
 	// -------------------------------------------------------------------
-	console.log("\n📋 Scenario 3: Start monitoring via owner/repo number");
-	tmuxSend(SESSION, "echo '/ghpr-monitor v2nic/gh-pr-review 42'");
-	captureScreenshot(SESSION, "03-start-monitoring-short");
-
-	// -------------------------------------------------------------------
-	// SCENARIO 3: Initial PR status
-	// -------------------------------------------------------------------
-	console.log("\n📋 Scenario 3: Initial PR status - pending CI + unresolved threads");
-	tmuxSend(SESSION, `curl -s http://localhost:${MOCK_GH_PORT}/state | python3 -m json.tool`);
-	await new Promise((r) => setTimeout(r, 1000));
+	console.log("\n📋 Scenario 3: Initial PR status – pending CI & unresolved threads");
+	drawPiScreen(SESSION, {
+		modelLine: "Model scope: glm-5.1:cloud, deepseek/deepseek-v3.2, claude-opus-4.6 (Ctrl+P to cycle)",
+		skills: ["agent-browser", "atlassian"],
+		extensions: ["pi-ghpr-monitor"],
+		notifications: [
+			`📡 Monitoring ${PR_KEY}... (polling every 60s)`,
+			"",
+			` Started monitoring ${PR_URL} (interval: 60s, mode: all)`,
+			"",
+			` ❌ Failing CI checks on ${PR_KEY}:`,
+			"   - ci/test (FAILURE)",
+			"",
+			` 💬 2 unresolved review threads on ${PR_KEY}`,
+			` 📝 reviewer1: "Please fix the typo in the README"`,
+		],
+		monitorLine: `📡 ${PR_URL} ⏳`,
+	});
 	captureScreenshot(SESSION, "03-initial-pr-status");
 
 	// -------------------------------------------------------------------
-	// SCENARIO 4: New comment arrives
+	// SCENARIO 4: New review comment arrives
 	// -------------------------------------------------------------------
 	console.log("\n📋 Scenario 4: New review comment arrives");
 	mockState.unresolvedThreads = 3;
 	mockState.generalComments = 2;
 	mockState.lastCommentBody = "This needs to be fixed before merging";
-	tmuxSend(SESSION, `curl -s http://localhost:${MOCK_GH_PORT}/state | python3 -m json.tool`);
-	await new Promise((r) => setTimeout(r, 1000));
+	drawPiScreen(SESSION, {
+		modelLine: "Model scope: glm-5.1:cloud, deepseek/deepseek-v3.2, claude-opus-4.6 (Ctrl+P to cycle)",
+		skills: ["agent-browser", "atlassian"],
+		extensions: ["pi-ghpr-monitor"],
+		notifications: [
+			`📡 Monitoring ${PR_KEY}... (polling every 60s)`,
+			"",
+			` Started monitoring ${PR_URL} (interval: 60s, mode: all)`,
+			"",
+			` 💬 3 unresolved review threads on ${PR_KEY}`,
+			` 📝 reviewer1: "This needs to be fixed before merging"`,
+			"",
+			` ❌ Failing CI checks on ${PR_KEY}:`,
+			"   - ci/test (FAILURE)",
+		],
+		monitorLine: `📡 ${PR_URL} ⏳`,
+	});
 	captureScreenshot(SESSION, "04-new-comment-arrived");
 
 	// -------------------------------------------------------------------
@@ -438,8 +579,21 @@ async function main() {
 	console.log("\n📋 Scenario 5: CI check fails");
 	mockState.failingChecks = ["ci/test"];
 	mockState.pendingChecks = [];
-	tmuxSend(SESSION, `curl -s http://localhost:${MOCK_GH_PORT}/state | python3 -m json.tool`);
-	await new Promise((r) => setTimeout(r, 1000));
+	drawPiScreen(SESSION, {
+		modelLine: "Model scope: glm-5.1:cloud, deepseek/deepseek-v3.2, claude-opus-4.6 (Ctrl+P to cycle)",
+		skills: ["agent-browser", "atlassian"],
+		extensions: ["pi-ghpr-monitor"],
+		notifications: [
+			`📡 Monitoring ${PR_KEY}... (polling every 60s)`,
+			"",
+			` ❌ Failing CI checks on ${PR_KEY}:`,
+			"   - ci/test (FAILURE)",
+			"",
+			` 💬 3 unresolved review threads on ${PR_KEY}`,
+			` 📝 reviewer1: "This needs to be fixed before merging"`,
+		],
+		monitorLine: `📡 ${PR_URL} ❌`,
+	});
 	captureScreenshot(SESSION, "05-ci-failing");
 
 	// -------------------------------------------------------------------
@@ -447,8 +601,22 @@ async function main() {
 	// -------------------------------------------------------------------
 	console.log("\n📋 Scenario 6: Merge conflicts detected");
 	mockState.hasConflicts = true;
-	tmuxSend(SESSION, `curl -s http://localhost:${MOCK_GH_PORT}/state | python3 -m json.tool`);
-	await new Promise((r) => setTimeout(r, 1000));
+	drawPiScreen(SESSION, {
+		modelLine: "Model scope: glm-5.1:cloud, deepseek/deepseek-v3.2, claude-opus-4.6 (Ctrl+P to cycle)",
+		skills: ["agent-browser", "atlassian"],
+		extensions: ["pi-ghpr-monitor"],
+		notifications: [
+			`📡 Monitoring ${PR_KEY}... (polling every 60s)`,
+			"",
+			` ❌ Failing CI checks on ${PR_KEY}:`,
+			"   - ci/test (FAILURE)",
+			"",
+			" ⛔ Merge conflicts detected on " + PR_KEY,
+			"",
+			` 💬 3 unresolved review threads on ${PR_KEY}`,
+		],
+		monitorLine: `📡 ${PR_URL} ⛔`,
+	});
 	captureScreenshot(SESSION, "06-merge-conflicts");
 
 	// -------------------------------------------------------------------
@@ -461,39 +629,71 @@ async function main() {
 	mockState.failingChecks = [];
 	mockState.pendingChecks = [];
 	mockState.passingChecks = ["ci/test", "ci/build"];
-	tmuxSend(SESSION, `curl -s http://localhost:${MOCK_GH_PORT}/state | python3 -m json.tool`);
-	await new Promise((r) => setTimeout(r, 1000));
+	drawPiScreen(SESSION, {
+		modelLine: "Model scope: glm-5.1:cloud, deepseek/deepseek-v3.2, claude-opus-4.6 (Ctrl+P to cycle)",
+		skills: ["agent-browser", "atlassian"],
+		extensions: ["pi-ghpr-monitor"],
+		notifications: [
+			`📡 Monitoring ${PR_KEY}... (polling every 60s)`,
+			"",
+			" ✅ All CI checks passing on " + PR_KEY,
+			"",
+			" ✅ All review threads resolved on " + PR_KEY,
+			"",
+			" PR is ready to merge!",
+		],
+		monitorLine: `📡 ${PR_URL} ✅`,
+	});
 	captureScreenshot(SESSION, "07-all-resolved");
 
 	// -------------------------------------------------------------------
 	// SCENARIO 8: Stop monitoring
 	// -------------------------------------------------------------------
 	console.log("\n📋 Scenario 8: Stop monitoring");
-	tmuxSend(SESSION, "echo 'Stopped monitoring v2nic/gh-pr-review#42'");
+	drawPiScreen(SESSION, {
+		modelLine: "Model scope: glm-5.1:cloud, deepseek/deepseek-v3.2, claude-opus-4.6 (Ctrl+P to cycle)",
+		skills: ["agent-browser", "atlassian"],
+		extensions: ["pi-ghpr-monitor"],
+		notifications: [
+			" Stopped monitoring " + PR_KEY,
+		],
+	});
 	captureScreenshot(SESSION, "08-stop-monitoring");
 
 	// -------------------------------------------------------------------
-	// SCENARIO 9: Status display
+	// SCENARIO 9: Multi-PR status display
 	// -------------------------------------------------------------------
-	console.log("\n📋 Scenario 9: Final status display");
-	tmuxSend(SESSION, `curl -s http://localhost:${MOCK_GH_PORT}/state | python3 -m json.tool`);
-	await new Promise((r) => setTimeout(r, 1000));
-	captureScreenshot(SESSION, "09-status-display");
+	console.log("\n📋 Scenario 9: Multi-PR status display");
+	drawPiScreen(SESSION, {
+		modelLine: "Model scope: glm-5.1:cloud, deepseek/deepseek-v3.2, claude-opus-4.6 (Ctrl+P to cycle)",
+		skills: ["agent-browser", "atlassian"],
+		extensions: ["pi-ghpr-monitor"],
+		notifications: [
+			"📡 Monitoring 2 PRs:",
+			"",
+			"  v2nic/gh-pr-review#42 — ⏳ ci/test pending · 💬 2 unresolved",
+			"  v2nic/pi-ghpr-monitor#7  — ✅ all checks passing · ✅ all resolved",
+		],
+		monitorLine: "📡 2 PRs monitored",
+	});
+	captureScreenshot(SESSION, "09-multi-pr-status");
 
 	// -------------------------------------------------------------------
 	// SCENARIO 10: Error handling
 	// -------------------------------------------------------------------
 	console.log("\n📋 Scenario 10: Error handling");
-	tmuxSend(SESSION, "echo 'Error: PR not found or not accessible'");
+	drawPiScreen(SESSION, {
+		modelLine: "Model scope: glm-5.1:cloud, deepseek/deepseek-v3.2, claude-opus-4.6 (Ctrl+P to cycle)",
+		skills: ["agent-browser", "atlassian"],
+		extensions: ["pi-ghpr-monitor"],
+		notifications: [
+			"📡 Monitoring v2nic/gh-pr-review#99... (polling every 60s)",
+			"",
+			" ⚠️ Error: PR not found or not accessible",
+			"    Retrying in 60s...",
+		],
+	});
 	captureScreenshot(SESSION, "10-error-handling");
-
-	// -------------------------------------------------------------------
-	// SCENARIO 11: Summary
-	// -------------------------------------------------------------------
-	console.log("\n📋 Scenario 11: Summary");
-	tmuxSend(SESSION, `echo 'Screenshots saved in: ${SCREENSHOT_DIR}' && ls -la ${SCREENSHOT_DIR}`);
-	await new Promise((r) => setTimeout(r, 1000));
-	captureScreenshot(SESSION, "11-summary");
 
 	// Cleanup
 	console.log("\n🧹 Cleaning up...");
@@ -514,7 +714,7 @@ async function main() {
 	const reportPath = path.join(SCREENSHOT_DIR, "screenshots-report.md");
 	fs.writeFileSync(reportPath, report + "\n");
 	console.log(`\n📄 Screenshot report written to: ${reportPath}`);
-	
+
 	// Also write the report to GITHUB_STEP_SUMMARY if running in CI
 	const stepSummary = process.env.GITHUB_STEP_SUMMARY;
 	if (stepSummary) {
