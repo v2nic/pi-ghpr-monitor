@@ -41,7 +41,7 @@ jobs:
         run: |
           cd test/integration
           chmod +x ./run-screenshots.sh
-          node run-screenshots.js ./screenshots
+          npx tsx run-screenshots.ts ./screenshots
 
       - name: Upload screenshots as artifacts
         if: always()

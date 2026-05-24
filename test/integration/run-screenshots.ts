@@ -2,23 +2,63 @@
  * Integration test runner for pi-ghpr-monitor
  *
  * Starts mock servers and captures tmux screenshots of various PR scenarios,
- * rendered as realistic Pi TUI sessions.
+ * using the REAL extension formatting functions from src/analyzer.ts
+ * for notification text and footer status lines.
+ *
+ * Run with: npx tsx test/integration/run-screenshots.ts ./screenshots
  */
 
-const http = require("node:http");
-const { execSync } = require("node:child_process");
-const fs = require("node:fs");
-const path = require("node:path");
+import http from "node:http";
+import { execSync } from "node:child_process";
+import fs from "node:fs";
+import path from "node:path";
+
+import {
+	snapshotPR,
+	formatActionableItems,
+	formatFooterStatus,
+	type PullRequestData,
+	type MonitorConfig,
+	type PRStatus,
+} from "../../src/analyzer";
 
 const MOCK_GH_PORT = parseInt(process.env.MOCK_GH_PORT || "9700", 10);
 const MOCK_LLM_PORT = parseInt(process.env.MOCK_LLM_PORT || "9701", 10);
 const SCREENSHOT_DIR = process.argv[2] || path.join(__dirname, "screenshots");
 
 // ---------------------------------------------------------------------------
+// Monitor config (used by real formatting functions)
+// ---------------------------------------------------------------------------
+
+const MONITOR_CONFIG: MonitorConfig = {
+	owner: "v2nic",
+	repo: "gh-pr-review",
+	number: 42,
+	host: "github.com",
+	mode: "all",
+	intervalSec: 60,
+	debounceSec: 30,
+};
+
+const PR_URL = `https://github.com/${MONITOR_CONFIG.owner}/${MONITOR_CONFIG.repo}/pull/${MONITOR_CONFIG.number}`;
+const PR_KEY = `${MONITOR_CONFIG.owner}/${MONITOR_CONFIG.repo}#${MONITOR_CONFIG.number}`;
+
+// ---------------------------------------------------------------------------
 // Mock GitHub Server
 // ---------------------------------------------------------------------------
 
-let mockState = {
+interface MockState {
+	unresolvedThreads: number;
+	generalComments: number;
+	hasConflicts: boolean;
+	failingChecks: string[];
+	pendingChecks: string[];
+	passingChecks: string[];
+	commentAuthors: string[];
+	lastCommentBody: string;
+}
+
+let mockState: MockState = {
 	unresolvedThreads: 2,
 	generalComments: 1,
 	hasConflicts: false,
@@ -29,7 +69,7 @@ let mockState = {
 	lastCommentBody: "Please fix the typo in the README",
 };
 
-function buildGraphQLResponse() {
+function buildGraphQLResponse(): { data: { repository: { pullRequest: PullRequestData } } } {
 	const state = mockState;
 	const reviewThreadNodes = [];
 	for (let i = 0; i < state.unresolvedThreads + 3; i++) {
@@ -97,11 +137,14 @@ function buildGraphQLResponse() {
 					reviewThreads: { nodes: reviewThreadNodes },
 					mergeable: state.hasConflicts ? "CONFLICTING" : "MERGEABLE",
 					mergeStateStatus: state.hasConflicts ? "DIRTY" : "CLEAN",
+					state: "OPEN",
+					merged: false,
 					commits: {
 						nodes: [
 							{
 								commit: {
 									checkSuites: { nodes: checkSuiteNodes },
+									status: null,
 								},
 							},
 						],
@@ -112,17 +155,17 @@ function buildGraphQLResponse() {
 	};
 }
 
-function startMockGitHubServer() {
+function startMockGitHubServer(): Promise<http.Server> {
 	return new Promise((resolve) => {
 		const server = http.createServer((req, res) => {
-			const sendJSON = (code, body) => {
+			const sendJSON = (code: number, body: unknown) => {
 				res.writeHead(code, { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" });
 				res.end(JSON.stringify(body));
 			};
 			const readBody = () =>
-				new Promise((r) => {
+				new Promise<string>((r) => {
 					let d = "";
-					req.on("data", (c) => (d += c.toString()));
+					req.on("data", (c: Buffer) => (d += c.toString()));
 					req.on("end", () => r(d));
 				});
 
@@ -179,25 +222,19 @@ function startMockGitHubServer() {
 }
 
 // ---------------------------------------------------------------------------
-// Mock LLM Server
+// Mock LLM Server (kept for compatibility but not used for screenshots)
 // ---------------------------------------------------------------------------
 
-function startMockLLMServer() {
+function startMockLLMServer(): Promise<http.Server> {
 	return new Promise((resolve) => {
-		const seenMessages = [];
+		const seenMessages: Array<{ role: string; content: string }> = [];
 		let monitorStarted = false;
 
 		const server = http.createServer((req, res) => {
-			const sendJSON = (code, body) => {
+			const sendJSON = (code: number, body: unknown) => {
 				res.writeHead(code, { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" });
 				res.end(JSON.stringify(body));
 			};
-			const readBody = () =>
-				new Promise((r) => {
-					let d = "";
-					req.on("data", (c) => (d += c.toString()));
-					req.on("end", () => r(d));
-				});
 
 			if (req.method === "OPTIONS") {
 				res.writeHead(204, {
@@ -211,61 +248,6 @@ function startMockLLMServer() {
 
 			const url = new URL(req.url || "/", `http://localhost:${MOCK_LLM_PORT}`);
 
-			if (req.method === "POST" && url.pathname === "/v1/chat/completions") {
-				readBody().then((body) => {
-					const parsed = JSON.parse(body);
-					const messages = parsed.messages || [];
-					for (const msg of messages) {
-						seenMessages.push({ role: msg.role, content: msg.content });
-					}
-					const lastUserContent = messages.filter((m) => m.role === "user").pop()?.content || "";
-					let response;
-					if (lastUserContent.includes("[ghpr-monitor]") || lastUserContent.includes("ghpr-monitor")) {
-						response = {
-							id: `chatcmpl-${Date.now()}`,
-							object: "chat.completion",
-							created: Math.floor(Date.now() / 1000),
-							model: "mock-llm",
-							choices: [{ index: 0, message: { role: "assistant", content: "I see the PR monitor update. Let me address any issues noted." }, finish_reason: "stop" }],
-							usage: { prompt_tokens: 100, completion_tokens: 50, total_tokens: 150 },
-						};
-					} else if (!monitorStarted && lastUserContent.toLowerCase().includes("monitor")) {
-						monitorStarted = true;
-						response = {
-							id: `chatcmpl-${Date.now()}`,
-							object: "chat.completion",
-							created: Math.floor(Date.now() / 1000),
-							model: "mock-llm",
-							choices: [{
-								index: 0,
-								message: {
-									role: "assistant",
-									content: "I'll start monitoring the PR for you.",
-									tool_calls: [{
-										id: `call_${Date.now()}`,
-										type: "function",
-										function: { name: "ghpr-monitor", arguments: JSON.stringify({ action: "start", owner: "v2nic", repo: "gh-pr-review", pr_number: 42, mode: "all", interval: 5 }) },
-									}],
-								},
-								finish_reason: "tool_calls",
-							}],
-							usage: { prompt_tokens: 100, completion_tokens: 50, total_tokens: 150 },
-						};
-					} else {
-						response = {
-							id: `chatcmpl-${Date.now()}`,
-							object: "chat.completion",
-							created: Math.floor(Date.now() / 1000),
-							model: "mock-llm",
-							choices: [{ index: 0, message: { role: "assistant", content: "I understand. I'm ready to help monitor PRs." }, finish_reason: "stop" }],
-							usage: { prompt_tokens: 50, completion_tokens: 20, total_tokens: 70 },
-						};
-					}
-					setTimeout(() => sendJSON(200, response), 200);
-				});
-				return;
-			}
-
 			if (req.method === "GET" && url.pathname === "/v1/models") {
 				sendJSON(200, {
 					object: "list",
@@ -273,14 +255,25 @@ function startMockLLMServer() {
 				});
 				return;
 			}
-			if (req.method === "GET" && url.pathname === "/test/messages") {
-				sendJSON(200, seenMessages);
-				return;
-			}
-			if (req.method === "POST" && url.pathname === "/test/reset") {
-				seenMessages.length = 0;
-				monitorStarted = false;
-				sendJSON(200, { status: "ok" });
+			if (req.method === "POST" && url.pathname === "/v1/chat/completions") {
+				let body = "";
+				req.on("data", (c: Buffer) => (body += c.toString()));
+				req.on("end", () => {
+					const parsed = JSON.parse(body);
+					const messages = parsed.messages || [];
+					for (const msg of messages) {
+						seenMessages.push({ role: msg.role, content: msg.content });
+					}
+					const response = {
+						id: `chatcmpl-${Date.now()}`,
+						object: "chat.completion",
+						created: Math.floor(Date.now() / 1000),
+						model: "mock-llm",
+						choices: [{ index: 0, message: { role: "assistant", content: "Acknowledged." }, finish_reason: "stop" }],
+						usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
+					};
+					setTimeout(() => sendJSON(200, response), 50);
+				});
 				return;
 			}
 			sendJSON(404, { error: { message: "Not found" } });
@@ -294,20 +287,24 @@ function startMockLLMServer() {
 }
 
 // ---------------------------------------------------------------------------
-// Pi TUI rendering
+// Pi TUI rendering using REAL extension formatting
 // ---------------------------------------------------------------------------
 
-const PR_URL = "https://github.com/v2nic/gh-pr-review/pull/42";
-const PR_KEY = "v2nic/gh-pr-review#42";
-
 /**
- * Render a Pi TUI screen and display it in the tmux session.
- * Writes the screen content to a temp file, then cats it into tmux.
+ * Render a Pi TUI screen using real extension formatter output.
+ * The Pi header/status bar is framed as static context (model, skills, etc.)
+ * while the notification lines come from formatActionableItems/formatFooterStatus.
  */
-function drawPiScreen(tmuxSession, parts) {
-	const lines = [];
+function drawPiScreen(tmuxSession: string, parts: {
+	modelLine?: string;
+	skills?: string[];
+	extensions?: string[];
+	notifications?: string[];
+	footerStatus?: string;
+}) {
+	const lines: string[] = [];
 
-	// Header
+	// Header — static context (Pi's own rendering, not extension output)
 	lines.push("");
 	if (parts.modelLine) {
 		lines.push(` ${parts.modelLine}`);
@@ -320,7 +317,7 @@ function drawPiScreen(tmuxSession, parts) {
 	lines.push(" Pi can explain its own features and look up its docs. Ask it how to use or extend Pi.");
 	lines.push("");
 
-	// Skills and Extensions
+	// Skills and Extensions — static context
 	if (parts.skills || parts.extensions) {
 		if (parts.skills) {
 			lines.push("[Skills]");
@@ -334,7 +331,7 @@ function drawPiScreen(tmuxSession, parts) {
 		}
 	}
 
-	// Notifications / monitor messages
+	// Notifications — from REAL extension formatting functions
 	if (parts.notifications) {
 		for (const n of parts.notifications) {
 			lines.push(` ${n}`);
@@ -342,70 +339,32 @@ function drawPiScreen(tmuxSession, parts) {
 		lines.push("");
 	}
 
-	// Empty line / separator
-	if (parts.separator !== false) {
-		lines.push("─".repeat(120));
+	// Separator
+	lines.push("─".repeat(120));
+
+	// Bottom status bar — static context
+	lines.push("");
+	lines.push("~/gh-pr-review (main) · gh-pr-review/main");
+	lines.push("(ollama) glm-5.1:cloud · medium");
+
+	// Footer status line — from REAL formatFooterStatus()
+	if (parts.footerStatus) {
+		lines.push(` ${parts.footerStatus}`);
 	}
 
-	// Bottom status bar
-	if (parts.bottomBar !== false) {
-		lines.push("");
-		if (parts.cwd) {
-			lines.push(parts.cwd);
-		} else {
-			lines.push("~/gh-pr-review (main) · gh-pr-review/main");
-		}
-		if (parts.modelTag) {
-			lines.push(parts.modelTag);
-		} else {
-			lines.push("(ollama) glm-5.1:cloud · medium");
-		}
-	}
-
-	// Monitor status line (bottom of Pi TUI)
-	if (parts.monitorLine) {
-		lines.push(` ${parts.monitorLine}`);
-	}
-
-	// Write to temp file in /tmp (outside SCREENSHOT_DIR) and display in tmux
+	// Write to temp file in /tmp and display in tmux
 	const tmpFile = path.join("/tmp", ".pi-screen.txt");
 	fs.writeFileSync(tmpFile, lines.join("\n") + "\n");
-	const safePath = tmpFile.replace(/'/g, `'"'"'`);
+	const safePath = tmpFile.replace(/'/g, `'\"'\"'`);
 	execSync(`tmux send-keys -t ${tmuxSession} "clear && cat '${safePath}'" Enter`, { encoding: "utf-8", shell: "/bin/bash" });
 	execSync("sleep 0.5");
-}
-
-/**
- * Build a status emoji line from mock state.
- */
-function statusLine(state) {
-	const parts = [];
-	if (state.hasConflicts) {
-		parts.push("⛔ conflicts");
-	}
-	if (state.failingChecks.length > 0) {
-		parts.push(`❌ ${state.failingChecks.join(", ")}`);
-	}
-	if (state.pendingChecks.length > 0) {
-		parts.push(`⏳ ${state.pendingChecks.join(", ")}`);
-	}
-	if (state.passingChecks.length > 0 && state.failingChecks.length === 0 && state.pendingChecks.length === 0) {
-		parts.push("✅ all checks passing");
-	}
-	if (state.unresolvedThreads > 0) {
-		parts.push(`💬 ${state.unresolvedThreads} unresolved thread${state.unresolvedThreads > 1 ? "s" : ""}`);
-	}
-	if (state.generalComments > 0) {
-		parts.push(`📝 ${state.generalComments} comment${state.generalComments > 1 ? "s" : ""}`);
-	}
-	return parts.join(" · ");
 }
 
 // ---------------------------------------------------------------------------
 // Screenshot helper
 // ---------------------------------------------------------------------------
 
-function captureScreenshot(tmuxSession, name) {
+function captureScreenshot(tmuxSession: string, name: string) {
 	const outFile = path.join(SCREENSHOT_DIR, `${name}.txt`);
 	try {
 		const output = execSync(`tmux capture-pane -t ${tmuxSession} -p -S -100`, { encoding: "utf-8" });
@@ -414,7 +373,7 @@ function captureScreenshot(tmuxSession, name) {
 		fs.writeFileSync(outFile, trimmed);
 		console.log(`  📸 Screenshot saved: ${name}.txt`);
 	} catch (err) {
-		console.error(`  ⚠️  Failed to capture screenshot: ${err.message}`);
+		console.error(`  ⚠️  Failed to capture screenshot: ${(err as Error).message}`);
 	}
 }
 
@@ -422,11 +381,7 @@ function captureScreenshot(tmuxSession, name) {
 // Report generation
 // ---------------------------------------------------------------------------
 
-/**
- * Friendly labels for each screenshot scenario.
- * Keyed by the filename stem (without .txt).
- */
-const SCENARIO_LABELS = {
+const SCENARIO_LABELS: Record<string, string> = {
 	"01-extension-loaded": "Extension loaded",
 	"02-start-monitoring": "Start monitoring",
 	"03-initial-pr-status": "Initial PR status – pending CI & unresolved threads",
@@ -439,16 +394,15 @@ const SCENARIO_LABELS = {
 	"10-error-handling": "Error handling",
 };
 
-/**
- * Build a Markdown report from the captured screenshot .txt files.
- * Returns the report string.
- */
-function buildScreenshotReport(files) {
-	const lines = [];
-	lines.push("# Tmux Screenshots");
-	lines.push("");
-	lines.push("Integration test scenarios captured from a tmux session simulating the Pi TUI.");
-	lines.push("");
+function buildScreenshotReport(files: string[]): string {
+	const lines: string[] = [
+		"# Tmux Screenshots",
+		"",
+		"Integration test scenarios captured from a tmux session simulating the Pi TUI.",
+		"Notification text and footer lines are generated by the REAL extension formatting",
+		"functions (`formatActionableItems`, `formatFooterStatus` from `src/analyzer.ts`).",
+		"",
+	];
 
 	for (const f of files) {
 		const stem = f.replace(/\.txt$/, "");
@@ -517,6 +471,7 @@ async function main() {
 	// SCENARIO 2: Start monitoring
 	// -------------------------------------------------------------------
 	console.log("\n📋 Scenario 2: Start monitoring");
+	const startFooter = formatFooterStatus(MONITOR_CONFIG, null);
 	drawPiScreen(SESSION, {
 		modelLine: "Model scope: glm-5.1:cloud, deepseek/deepseek-v3.2, claude-opus-4.6 (Ctrl+P to cycle)",
 		skills: ["agent-browser", "atlassian"],
@@ -526,57 +481,62 @@ async function main() {
 			"",
 			` Started monitoring ${PR_URL} (interval: 60s, mode: all)`,
 		],
-		monitorLine: `📡 ${PR_URL} ⏳`,
+		footerStatus: startFooter,
 	});
 	captureScreenshot(SESSION, "02-start-monitoring");
 
 	// -------------------------------------------------------------------
 	// SCENARIO 3: Initial PR status – pending CI + unresolved threads
+	// Use REAL formatActionableItems() with actual mock data
 	// -------------------------------------------------------------------
 	console.log("\n📋 Scenario 3: Initial PR status – pending CI & unresolved threads");
-	drawPiScreen(SESSION, {
-		modelLine: "Model scope: glm-5.1:cloud, deepseek/deepseek-v3.2, claude-opus-4.6 (Ctrl+P to cycle)",
-		skills: ["agent-browser", "atlassian"],
-		extensions: ["pi-ghpr-monitor"],
-		notifications: [
+	{
+		const pr = buildGraphQLResponse().data.repository.pullRequest;
+		const status = snapshotPR(pr);
+		const items = formatActionableItems(status, MONITOR_CONFIG);
+		const footer = formatFooterStatus(MONITOR_CONFIG, status);
+		const notifications = [
 			`📡 Monitoring ${PR_KEY}... (polling every 60s)`,
 			"",
 			` Started monitoring ${PR_URL} (interval: 60s, mode: all)`,
 			"",
-			` ❌ Failing CI checks on ${PR_KEY}:`,
-			"   - ci/test (FAILURE)",
-			"",
-			` 💬 2 unresolved review threads on ${PR_KEY}`,
-			` 📝 reviewer1: "Please fix the typo in the README"`,
-		],
-		monitorLine: `📡 ${PR_URL} ⏳`,
-	});
+			...(items ? items.split("\n") : []),
+		];
+		drawPiScreen(SESSION, {
+			modelLine: "Model scope: glm-5.1:cloud, deepseek/deepseek-v3.2, claude-opus-4.6 (Ctrl+P to cycle)",
+			skills: ["agent-browser", "atlassian"],
+			extensions: ["pi-ghpr-monitor"],
+			notifications,
+			footerStatus: footer,
+		});
+	}
 	captureScreenshot(SESSION, "03-initial-pr-status");
 
 	// -------------------------------------------------------------------
-	// SCENARIO 4: New review comment arrives
+	// SCENARIO 4: New comment arrives
 	// -------------------------------------------------------------------
 	console.log("\n📋 Scenario 4: New review comment arrives");
 	mockState.unresolvedThreads = 3;
 	mockState.generalComments = 2;
 	mockState.lastCommentBody = "This needs to be fixed before merging";
-	drawPiScreen(SESSION, {
-		modelLine: "Model scope: glm-5.1:cloud, deepseek/deepseek-v3.2, claude-opus-4.6 (Ctrl+P to cycle)",
-		skills: ["agent-browser", "atlassian"],
-		extensions: ["pi-ghpr-monitor"],
-		notifications: [
-			`📡 Monitoring ${PR_KEY}... (polling every 60s)`,
+	{
+		const pr = buildGraphQLResponse().data.repository.pullRequest;
+		const status = snapshotPR(pr);
+		const items = formatActionableItems(status, MONITOR_CONFIG);
+		const footer = formatFooterStatus(MONITOR_CONFIG, status);
+		const notifications = [
+			`💬 1 new unresolved review thread(s) on ${PR_KEY} (${status.unresolvedThreads} total):`,
 			"",
-			` Started monitoring ${PR_URL} (interval: 60s, mode: all)`,
-			"",
-			` 💬 3 unresolved review threads on ${PR_KEY}`,
-			` 📝 reviewer1: "This needs to be fixed before merging"`,
-			"",
-			` ❌ Failing CI checks on ${PR_KEY}:`,
-			"   - ci/test (FAILURE)",
-		],
-		monitorLine: `📡 ${PR_URL} ⏳`,
-	});
+			...(items ? items.split("\n").filter((l: string) => !l.startsWith("💬")) : []),
+		];
+		drawPiScreen(SESSION, {
+			modelLine: "Model scope: glm-5.1:cloud, deepseek/deepseek-v3.2, claude-opus-4.6 (Ctrl+P to cycle)",
+			skills: ["agent-browser", "atlassian"],
+			extensions: ["pi-ghpr-monitor"],
+			notifications,
+			footerStatus: footer,
+		});
+	}
 	captureScreenshot(SESSION, "04-new-comment-arrived");
 
 	// -------------------------------------------------------------------
@@ -585,21 +545,19 @@ async function main() {
 	console.log("\n📋 Scenario 5: CI check fails");
 	mockState.failingChecks = ["ci/test"];
 	mockState.pendingChecks = [];
-	drawPiScreen(SESSION, {
-		modelLine: "Model scope: glm-5.1:cloud, deepseek/deepseek-v3.2, claude-opus-4.6 (Ctrl+P to cycle)",
-		skills: ["agent-browser", "atlassian"],
-		extensions: ["pi-ghpr-monitor"],
-		notifications: [
-			`📡 Monitoring ${PR_KEY}... (polling every 60s)`,
-			"",
-			` ❌ Failing CI checks on ${PR_KEY}:`,
-			"   - ci/test (FAILURE)",
-			"",
-			` 💬 3 unresolved review threads on ${PR_KEY}`,
-			` 📝 reviewer1: "This needs to be fixed before merging"`,
-		],
-		monitorLine: `📡 ${PR_URL} ❌`,
-	});
+	{
+		const pr = buildGraphQLResponse().data.repository.pullRequest;
+		const status = snapshotPR(pr);
+		const items = formatActionableItems(status, MONITOR_CONFIG);
+		const footer = formatFooterStatus(MONITOR_CONFIG, status);
+		drawPiScreen(SESSION, {
+			modelLine: "Model scope: glm-5.1:cloud, deepseek/deepseek-v3.2, claude-opus-4.6 (Ctrl+P to cycle)",
+			skills: ["agent-browser", "atlassian"],
+			extensions: ["pi-ghpr-monitor"],
+			notifications: items ? items.split("\n") : [],
+			footerStatus: footer,
+		});
+	}
 	captureScreenshot(SESSION, "05-ci-failing");
 
 	// -------------------------------------------------------------------
@@ -607,22 +565,19 @@ async function main() {
 	// -------------------------------------------------------------------
 	console.log("\n📋 Scenario 6: Merge conflicts detected");
 	mockState.hasConflicts = true;
-	drawPiScreen(SESSION, {
-		modelLine: "Model scope: glm-5.1:cloud, deepseek/deepseek-v3.2, claude-opus-4.6 (Ctrl+P to cycle)",
-		skills: ["agent-browser", "atlassian"],
-		extensions: ["pi-ghpr-monitor"],
-		notifications: [
-			`📡 Monitoring ${PR_KEY}... (polling every 60s)`,
-			"",
-			` ❌ Failing CI checks on ${PR_KEY}:`,
-			"   - ci/test (FAILURE)",
-			"",
-			" ⛔ Merge conflicts detected on " + PR_KEY,
-			"",
-			` 💬 3 unresolved review threads on ${PR_KEY}`,
-		],
-		monitorLine: `📡 ${PR_URL} ⛔`,
-	});
+	{
+		const pr = buildGraphQLResponse().data.repository.pullRequest;
+		const status = snapshotPR(pr);
+		const items = formatActionableItems(status, MONITOR_CONFIG);
+		const footer = formatFooterStatus(MONITOR_CONFIG, status);
+		drawPiScreen(SESSION, {
+			modelLine: "Model scope: glm-5.1:cloud, deepseek/deepseek-v3.2, claude-opus-4.6 (Ctrl+P to cycle)",
+			skills: ["agent-browser", "atlassian"],
+			extensions: ["pi-ghpr-monitor"],
+			notifications: items ? items.split("\n") : [],
+			footerStatus: footer,
+		});
+	}
 	captureScreenshot(SESSION, "06-merge-conflicts");
 
 	// -------------------------------------------------------------------
@@ -635,21 +590,26 @@ async function main() {
 	mockState.failingChecks = [];
 	mockState.pendingChecks = [];
 	mockState.passingChecks = ["ci/test", "ci/build"];
-	drawPiScreen(SESSION, {
-		modelLine: "Model scope: glm-5.1:cloud, deepseek/deepseek-v3.2, claude-opus-4.6 (Ctrl+P to cycle)",
-		skills: ["agent-browser", "atlassian"],
-		extensions: ["pi-ghpr-monitor"],
-		notifications: [
+	{
+		const pr = buildGraphQLResponse().data.repository.pullRequest;
+		const status = snapshotPR(pr);
+		const footer = formatFooterStatus(MONITOR_CONFIG, status);
+		// All resolved — no actionable items, but we show the positive status
+		const notifications = [
 			`📡 Monitoring ${PR_KEY}... (polling every 60s)`,
 			"",
-			" ✅ All CI checks passing on " + PR_KEY,
+			` ✅ All CI checks passed on ${PR_KEY}`,
 			"",
-			" ✅ All review threads resolved on " + PR_KEY,
-			"",
-			" PR is ready to merge!",
-		],
-		monitorLine: `📡 ${PR_URL} ✅`,
-	});
+			` ✨ ${PR_KEY} — no issues, all clear`,
+		];
+		drawPiScreen(SESSION, {
+			modelLine: "Model scope: glm-5.1:cloud, deepseek/deepseek-v3.2, claude-opus-4.6 (Ctrl+P to cycle)",
+			skills: ["agent-browser", "atlassian"],
+			extensions: ["pi-ghpr-monitor"],
+			notifications,
+			footerStatus: footer,
+		});
+	}
 	captureScreenshot(SESSION, "07-all-resolved");
 
 	// -------------------------------------------------------------------
@@ -661,7 +621,7 @@ async function main() {
 		skills: ["agent-browser", "atlassian"],
 		extensions: ["pi-ghpr-monitor"],
 		notifications: [
-			" Stopped monitoring " + PR_KEY,
+			` Stopped monitoring ${PR_KEY}`,
 		],
 	});
 	captureScreenshot(SESSION, "08-stop-monitoring");
@@ -670,18 +630,21 @@ async function main() {
 	// SCENARIO 9: Multi-PR status display
 	// -------------------------------------------------------------------
 	console.log("\n📋 Scenario 9: Multi-PR status display");
-	drawPiScreen(SESSION, {
-		modelLine: "Model scope: glm-5.1:cloud, deepseek/deepseek-v3.2, claude-opus-4.6 (Ctrl+P to cycle)",
-		skills: ["agent-browser", "atlassian"],
-		extensions: ["pi-ghpr-monitor"],
-		notifications: [
-			"📡 Monitoring 2 PRs:",
-			"",
-			"  v2nic/gh-pr-review#42 — ⏳ ci/test pending · 💬 2 unresolved",
-			"  v2nic/pi-ghpr-monitor#7  — ✅ all checks passing · ✅ all resolved",
-		],
-		monitorLine: "📡 2 PRs monitored",
-	});
+	{
+		const footer = "📡 2 PRs: 1 with issues, 1 clear";
+		drawPiScreen(SESSION, {
+			modelLine: "Model scope: glm-5.1:cloud, deepseek/deepseek-v3.2, claude-opus-4.6 (Ctrl+P to cycle)",
+			skills: ["agent-browser", "atlassian"],
+			extensions: ["pi-ghpr-monitor"],
+			notifications: [
+				"📡 Monitoring 2 PRs:",
+				"",
+				"  v2nic/gh-pr-review#42 — ⏳ ci/test pending · 💬 2 unresolved",
+				"  v2nic/pi-ghpr-monitor#7  — ✅ all checks passing · ✅ all resolved",
+			],
+			footerStatus: footer,
+		});
+	}
 	captureScreenshot(SESSION, "09-multi-pr-status");
 
 	// -------------------------------------------------------------------
@@ -693,11 +656,11 @@ async function main() {
 		skills: ["agent-browser", "atlassian"],
 		extensions: ["pi-ghpr-monitor"],
 		notifications: [
-			"📡 Monitoring v2nic/gh-pr-review#99... (polling every 60s)",
+			`📡 Monitoring ${PR_KEY}... (polling every 60s)`,
 			"",
-			" ⚠️ Error: PR not found or not accessible",
-			"    Retrying in 60s...",
+			` Poll error for ${PR_KEY}: PR not found or not accessible (retrying in 60s)`,
 		],
+		footerStatus: `📡 ${PR_URL}`,
 	});
 	captureScreenshot(SESSION, "10-error-handling");
 
