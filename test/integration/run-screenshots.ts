@@ -376,10 +376,14 @@ async function main() {
 	execSync(`tmux new-session -d -s ${PI_SESSION} -x 160 -y 45`);
 	await new Promise((r) => setTimeout(r, 500));
 
+	// Build the extension bundle (jiti can't parse the source .ts directly)
+	const projectDir = path.resolve(path.join(SCREENSHOT_DIR, "..", ".."));
+	console.log("Building extension bundle...");
+	execSync(`cd ${projectDir} && npx esbuild src/index.ts --bundle --platform=node --target=node22 --outfile=dist/index.js --external:@mariozechner/pi-ai --external:@mariozechner/pi-tui --external:@mariozechner/pi-agent-core --external:@sinclair/typebox`, { encoding: "utf-8", shell: "/bin/bash" });
+
 	// Start Pi in tmux
 	console.log("4. Starting Pi agent in tmux...");
-	const projectDir = path.resolve(path.join(SCREENSHOT_DIR, "..", ".."));
-	tmuxSend(PI_SESSION, `cd ${projectDir} && PI_CODING_AGENT_DIR=${PI_DIR} PI_OFFLINE=1 npx pi --provider mock --model mock-llm --no-session --extension ./src/index.ts >/dev/null 2>&1 &`);
+	tmuxSend(PI_SESSION, `cd ${projectDir} && PI_CODING_AGENT_DIR=${PI_DIR} PI_OFFLINE=1 npx pi --provider mock --model mock-llm --no-session --extension ./dist/index.js >/dev/null 2>&1 &`);
 	await new Promise((r) => setTimeout(r, 3000)); // Give Pi time to start
 
 	// SCENARIO 1: Extension loaded
