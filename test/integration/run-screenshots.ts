@@ -16,7 +16,7 @@ const MOCK_GH_PORT = parseInt(process.env.MOCK_GH_PORT || "9700", 10);
 const MOCK_LLM_PORT = parseInt(process.env.MOCK_LLM_PORT || "9701", 10);
 const SCREENSHOT_DIR = process.argv[2] || path.join(__dirname, "screenshots");
 const PI_SESSION = "pi-ghpr-test";
-const PI_DIR = path.join(SCREENSHOT_DIR, "..", ".pi-integration");
+const PI_DIR = path.join(__dirname, ".pi-integration");
 
 // ---------------------------------------------------------------------------
 // Mock GitHub Server
@@ -377,7 +377,7 @@ async function main() {
 	await new Promise((r) => setTimeout(r, 500));
 
 	// Build the extension bundle (jiti can't parse the source .ts directly)
-	const projectDir = path.resolve(path.join(SCREENSHOT_DIR, "..", ".."));
+	const projectDir = path.resolve(path.join(__dirname, "..", ".."));
 	console.log("Building extension bundle...");
 	execSync(`cd ${projectDir} && npx esbuild src/index.ts --bundle --platform=node --target=node22 --outfile=dist/index.js --external:@mariozechner/pi-ai --external:@mariozechner/pi-tui --external:@mariozechner/pi-agent-core --external:@sinclair/typebox`, { encoding: "utf-8", shell: "/bin/bash" });
 
