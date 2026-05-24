@@ -34,10 +34,16 @@ jobs:
       - name: Install dependencies
         run: npm install
 
+      - name: Install Pi agent
+        run: npm install --no-save @mariozechner/pi-coding-agent
+
       - name: Install tmux
         run: sudo apt-get update && sudo apt-get install -y tmux
 
       - name: Run integration tests with tmux screenshots
+        env:
+          PI_CODING_AGENT_DIR: ${{ github.workspace }}/test/integration/.pi-integration
+          PI_OFFLINE: "1"
         run: |
           cd test/integration
           chmod +x ./run-screenshots.sh
