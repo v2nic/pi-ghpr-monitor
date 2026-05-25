@@ -272,10 +272,12 @@ function tmuxType(tmuxSession: string, text: string) {
 // ---------------------------------------------------------------------------
 
 function setupPiConfig() {
-	fs.mkdirSync(path.join(PI_DIR, "agent"), { recursive: true });
+	// PI_CODING_AGENT_DIR points directly to the directory containing models.json/settings.json
+	// (not to a parent that has an "agent/" subdir)
+	fs.mkdirSync(PI_DIR, { recursive: true });
 
 	// models.json: custom "mock" provider pointing at our mock LLM server
-	fs.writeFileSync(path.join(PI_DIR, "agent", "models.json"), JSON.stringify({
+	fs.writeFileSync(path.join(PI_DIR, "models.json"), JSON.stringify({
 		providers: {
 			mock: {
 				api: "openai-completions",
@@ -295,7 +297,7 @@ function setupPiConfig() {
 	}, null, 2));
 
 	// settings.json
-	fs.writeFileSync(path.join(PI_DIR, "agent", "settings.json"), JSON.stringify({
+	fs.writeFileSync(path.join(PI_DIR, "settings.json"), JSON.stringify({
 		defaultProvider: "mock",
 		defaultModel: "mock-llm",
 		enabledModels: ["mock/mock-llm"],
