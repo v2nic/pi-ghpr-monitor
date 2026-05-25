@@ -42,7 +42,7 @@ jobs:
 
       - name: Run integration tests with tmux screenshots
         env:
-          PI_CODING_AGENT_DIR: ${{ github.workspace }}/test/integration/.pi-integration
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PI_OFFLINE: "1"
         run: |
           cd test/integration
