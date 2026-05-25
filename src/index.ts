@@ -276,7 +276,10 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 	const NUDGE_COOLDOWN_MS = 3 * 60 * 1000; // 3 minutes between nudges for idle agent
 
 	// For testing: allows pointing at a mock server
-	let mockBaseUrl: string | undefined;
+	let mockBaseUrl: string | undefined = process.env.GHPR_MOCK_BASE_URL;
+
+	// For testing: allows reducing the polling interval
+	const MOCK_INTERVAL_SECS = process.env.GHPR_MONITOR_INTERVAL_SECS ? parseInt(process.env.GHPR_MONITOR_INTERVAL_SECS, 10) : undefined;
 
 	const STEERING_PROMPT = `You have access to the ghpr-monitor tool. When the user asks you to watch or monitor a PR, use ghpr-monitor with action "start" to begin monitoring. The tool has actions: start, status, check, and stop. Multiple PRs can be monitored simultaneously. Monitoring continues until the user stops it with /ghpr-monitor off (stops all) or /ghpr-monitor off <PR> (stops specific). The user can also run /ghpr-monitor check to trigger an immediate poll (all PRs or a specific one). You will receive PR status updates as notifications. The url parameter accepts GitHub PR URLs or shorthand like "owner/repo#123".`;
 
@@ -742,7 +745,7 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 					number: parsed.number,
 					host: parsed.host,
 					mode: "all",
-					intervalSec: 60,
+					intervalSec: MOCK_INTERVAL_SECS ? Math.max(1, MOCK_INTERVAL_SECS) : 60,
 					debounceSec: 30,
 				};
 				const result = startMonitor(config);
@@ -766,7 +769,7 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 					number: shorthand.number,
 					host: shorthand.host,
 					mode: "all",
-					intervalSec: 60,
+					intervalSec: MOCK_INTERVAL_SECS ? Math.max(1, MOCK_INTERVAL_SECS) : 60,
 					debounceSec: 30,
 				};
 				const result = startMonitor(config);
@@ -795,7 +798,7 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 					number,
 					host: "github.com",
 					mode: "all",
-					intervalSec: 60,
+					intervalSec: MOCK_INTERVAL_SECS ? Math.max(1, MOCK_INTERVAL_SECS) : 60,
 					debounceSec: 30,
 				};
 				const result = startMonitor(config);
@@ -939,7 +942,7 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 						number: resolved.number,
 						host: resolved.host,
 						mode: params.mode || "all",
-						intervalSec: Math.max(10, params.interval || 60),
+						intervalSec: MOCK_INTERVAL_SECS ? Math.max(1, MOCK_INTERVAL_SECS) : Math.max(10, params.interval || 60),
 						debounceSec: 30,
 					};
 

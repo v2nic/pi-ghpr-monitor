@@ -4,6 +4,15 @@
  * Spawns a real Pi agent in tmux against mock servers and captures
  * actual TUI screenshots.
  *
+ * Key design decisions:
+ * - The extension's `GHPR_MOCK_BASE_URL` env var routes all GitHub GraphQL
+ *   queries to our mock server (instead of `gh api graphql`).
+ * - The `GHPR_MONITOR_INTERVAL_SECS` env var reduces the polling interval
+ *   from 60s to 5s so scenarios produce visible output in a reasonable time.
+ * - We wait for Pi's TUI to render before sending `/ghpr-monitor` commands.
+ * - We wait for the extension to actually produce output before capturing
+ *   each screenshot.
+ *
  * Run with: npx tsx test/integration/run-screenshots.ts ./screenshots
  */
 
@@ -17,6 +26,7 @@ const MOCK_LLM_PORT = parseInt(process.env.MOCK_LLM_PORT || "9701", 10);
 const SCREENSHOT_DIR = process.argv[2] || path.join(__dirname, "screenshots");
 const PI_SESSION = "pi-ghpr-test";
 const PI_DIR = path.join(__dirname, ".pi-integration");
+const POLL_INTERVAL_SECS = 5;
 
 // ---------------------------------------------------------------------------
 // Mock GitHub Server
@@ -44,18 +54,23 @@ let mockState: MockState = {
 	lastCommentBody: "Please fix the typo in the README",
 };
 
+let pollCount = 0;
+
 function buildGraphQLResponse() {
 	const state = mockState;
+	pollCount++;
+	console.log(`[mock-github] Building response for poll #${pollCount} (threads=${state.unresolvedThreads}, conflicts=${state.hasConflicts}, failing=${state.failingChecks.join(",")})`);
+
 	const reviewThreadNodes = [];
 	for (let i = 0; i < state.unresolvedThreads + 3; i++) {
 		const isResolved = i >= state.unresolvedThreads;
 		reviewThreadNodes.push({
-			id: `thread-${i}`,
+			id: `PRRT_mock_thread_${i}`,
 			isResolved,
 			comments: {
 				nodes: [
 					{
-						id: `thread-comment-${i}`,
+						id: `PRRC_mock_thread_comment_${i}`,
 						body: isResolved ? "Looks good now" : state.lastCommentBody,
 						author: { login: state.commentAuthors[i % state.commentAuthors.length] || "reviewer1" },
 						createdAt: new Date(Date.now() - (i + 1) * 60000).toISOString(),
@@ -68,7 +83,7 @@ function buildGraphQLResponse() {
 	const commentNodes = [];
 	for (let i = 0; i < state.generalComments; i++) {
 		commentNodes.push({
-			id: `comment-${i}`,
+			id: `PRRC_mock_comment_${i}`,
 			body: i === 0 ? state.lastCommentBody : `General comment ${i + 1}`,
 			author: { login: state.commentAuthors[i % state.commentAuthors.length] || "commenter1" },
 			createdAt: new Date(Date.now() - i * 30000).toISOString(),
@@ -78,7 +93,7 @@ function buildGraphQLResponse() {
 	const checkSuiteNodes = [];
 	for (const name of state.passingChecks) {
 		checkSuiteNodes.push({
-			id: `suite-pass-${name}`,
+			id: `CS_mock_pass_${name}`,
 			conclusion: "SUCCESS",
 			status: "COMPLETED",
 			app: { name, slug: name.toLowerCase().replace(/[^a-z0-9]/g, "-") },
@@ -87,7 +102,7 @@ function buildGraphQLResponse() {
 	}
 	for (const name of state.failingChecks) {
 		checkSuiteNodes.push({
-			id: `suite-fail-${name}`,
+			id: `CS_mock_fail_${name}`,
 			conclusion: "FAILURE",
 			status: "COMPLETED",
 			app: { name, slug: name.toLowerCase().replace(/[^a-z0-9]/g, "-") },
@@ -96,7 +111,7 @@ function buildGraphQLResponse() {
 	}
 	for (const name of state.pendingChecks) {
 		checkSuiteNodes.push({
-			id: `suite-pending-${name}`,
+			id: `CS_mock_pending_${name}`,
 			conclusion: null,
 			status: "IN_PROGRESS",
 			app: { name, slug: name.toLowerCase().replace(/[^a-z0-9]/g, "-") },
@@ -153,7 +168,8 @@ function startMockGitHubServer(): Promise<http.Server> {
 			const url = new URL(req.url || "/", `http://localhost:${MOCK_GH_PORT}`);
 
 			if (req.method === "POST" && url.pathname === "/graphql") {
-				readBody().then(() => {
+				readBody().then((body) => {
+					console.log(`[mock-github] GraphQL request: ${body.slice(0, 100)}...`);
 					setTimeout(() => sendJSON(200, buildGraphQLResponse()), 50);
 				});
 				return;
@@ -244,7 +260,7 @@ function startMockLLMServer(): Promise<http.Server> {
 }
 
 // ---------------------------------------------------------------------------
-// Screenshot helper
+// Screenshot & tmux helpers
 // ---------------------------------------------------------------------------
 
 function captureScreenshot(tmuxSession: string, name: string) {
@@ -260,11 +276,34 @@ function captureScreenshot(tmuxSession: string, name: string) {
 }
 
 function tmuxSend(tmuxSession: string, command: string) {
-	execSync(`tmux send-keys -t ${tmuxSession} "${command}" Enter`, { encoding: "utf-8", shell: "/bin/bash" });
+	execSync(`tmux send-keys -t ${tmuxSession} "${command.replace(/"/g, '\\"')}" Enter`, { encoding: "utf-8", shell: "/bin/bash" });
 }
 
 function tmuxType(tmuxSession: string, text: string) {
 	execSync(`tmux send-keys -t ${tmuxSession} "${text.replace(/"/g, '\\"')}"`, { encoding: "utf-8", shell: "/bin/bash" });
+}
+
+/**
+ * Wait for a specific string to appear in the tmux pane.
+ * Returns true if found, false if timed out.
+ */
+function waitForText(tmuxSession: string, text: string, timeoutMs: number = 30000): boolean {
+	const start = Date.now();
+	while (Date.now() - start < timeoutMs) {
+		try {
+			const output = execSync(`tmux capture-pane -t ${tmuxSession} -p -S -100`, { encoding: "utf-8" });
+			if (output.includes(text)) {
+				console.log(`  ⏱️  Found "${text.slice(0, 40)}" after ${Date.now() - start}ms`);
+				return true;
+			}
+		} catch {
+			// ignore
+		}
+		const sleepMs = Math.min(500, timeoutMs / 10);
+		execSync(`sleep ${sleepMs / 1000}`);
+	}
+	console.log(`  ⏱️  Timed out waiting for "${text.slice(0, 40)}" (${timeoutMs}ms)`);
+	return false;
 }
 
 // ---------------------------------------------------------------------------
@@ -273,7 +312,6 @@ function tmuxType(tmuxSession: string, text: string) {
 
 function setupPiConfig() {
 	// PI_CODING_AGENT_DIR points directly to the directory containing models.json/settings.json
-	// (not to a parent that has an "agent/" subdir)
 	fs.mkdirSync(PI_DIR, { recursive: true });
 
 	// models.json: custom "mock" provider pointing at our mock LLM server
@@ -329,8 +367,9 @@ function buildScreenshotReport(files: string[]): string {
 		"# Tmux Screenshots",
 		"",
 		"Integration test scenarios captured from a real Pi agent session in tmux.",
-		"Pi was started with mock GitHub and LLM servers, and `/ghpr-monitor` commands",
-		"were issued to trigger actual extension output.",
+		"Pi was started with mock GitHub and LLM servers. The extension was",
+		"configured with `GHPR_MOCK_BASE_URL` to route `gh api graphql` calls",
+		"to the mock server, and `GHPR_MONITOR_INTERVAL_SECS=5` for fast polling.",
 		"",
 	];
 
@@ -347,6 +386,22 @@ function buildScreenshotReport(files: string[]): string {
 	}
 
 	return lines.join("\n");
+}
+
+// ---------------------------------------------------------------------------
+// Assertions
+// ---------------------------------------------------------------------------
+
+function assertScreenshotContains(name: string, expected: string) {
+	const filePath = path.join(SCREENSHOT_DIR, `${name}.txt`);
+	if (!fs.existsSync(filePath)) {
+		throw new Error(`Assertion failed: screenshot ${name}.txt does not exist`);
+	}
+	const content = fs.readFileSync(filePath, "utf-8");
+	if (!content.includes(expected)) {
+		throw new Error(`Assertion failed: screenshot ${name}.txt does not contain "${expected}". Content:\n${content.slice(-500)}`);
+	}
+	console.log(`  ✅ Asserted ${name}: contains "${expected.slice(0, 40)}"`);
 }
 
 // ---------------------------------------------------------------------------
@@ -378,29 +433,64 @@ async function main() {
 	execSync(`tmux new-session -d -s ${PI_SESSION} -x 160 -y 45`);
 	await new Promise((r) => setTimeout(r, 500));
 
-	// Build the extension bundle (jiti can't parse the source .ts directly)
+	// Build the extension bundle
 	const projectDir = path.resolve(path.join(__dirname, "..", ".."));
 	console.log("Building extension bundle...");
-	execSync(`cd ${projectDir} && npx esbuild src/index.ts --bundle --platform=node --target=node22 --outfile=dist/index.js --external:@mariozechner/pi-ai --external:@mariozechner/pi-tui --external:@mariozechner/pi-agent-core --external:@sinclair/typebox`, { encoding: "utf-8", shell: "/bin/bash" });
+	execSync(
+		`cd ${projectDir} && npx esbuild src/index.ts --bundle --platform=node --target=node22 --outfile=dist/index.js --external:@mariozechner/pi-ai --external:@mariozechner/pi-tui --external:@mariozechner/pi-agent-core --external:@sinclair/typebox`,
+		{ encoding: "utf-8", shell: "/bin/bash" },
+	);
 
-	// Start Pi in tmux
+	// Start Pi in tmux with GHPR_MOCK_BASE_URL pointing at our mock GitHub server
+	// and GHPR_MONITOR_INTERVAL_SECS for fast polling.
 	console.log("4. Starting Pi agent in tmux...");
-	tmuxSend(PI_SESSION, `cd ${projectDir} && PI_CODING_AGENT_DIR=${PI_DIR} PI_OFFLINE=1 npx pi --provider mock --model mock-llm --no-session --extension ./dist/index.js`);
-	await new Promise((r) => setTimeout(r, 3000)); // Give Pi time to start
+	tmuxSend(
+		PI_SESSION,
+		`cd ${projectDir} && PI_CODING_AGENT_DIR=${PI_DIR} PI_OFFLINE=1 GHPR_MOCK_BASE_URL=http://localhost:${MOCK_GH_PORT} GHPR_MONITOR_INTERVAL_SECS=${POLL_INTERVAL_SECS} npx pi --provider mock --model mock-llm --no-session --extension ./dist/index.js`,
+	);
 
-	// SCENARIO 1: Extension loaded
+	// SCENARIO 1: Wait for Pi to fully start up and show the extension loaded
 	console.log("\n📋 Scenario 1: Extension loaded");
+	const piReady = waitForText(PI_SESSION, "Extensions", 30000);
+	if (!piReady) {
+		throw new Error("Pi failed to start within 30 seconds (no 'Extensions' text in TUI)");
+	}
+	// Wait a bit more for the startup screen to settle
+	await new Promise((r) => setTimeout(r, 1000));
 	captureScreenshot(PI_SESSION, "01-extension-loaded");
+	assertScreenshotContains("01-extension-loaded", "Extensions");
 
-	// SCENARIO 2: Start monitoring
+	// Dismiss the startup help screen by pressing Escape
+	// (Pi shows "Press ctrl+o" on first launch; sending Escape clears it)
+	tmuxSend(PI_SESSION, "");  // press Enter to dismiss help
+	await new Promise((r) => setTimeout(r, 500));
+
+	// SCENARIO 2: Start monitoring — use the /ghpr-monitor command
+	// This is a Pi command, not a slash command. We type it directly.
 	console.log("\n📋 Scenario 2: Start monitoring");
-	tmuxSend(PI_SESSION, "/ghpr-monitor https://github.com/v2nic/gh-pr-review/pull/42");
-	await new Promise((r) => setTimeout(r, 3000)); // Wait for Pi to process and ghpr-monitor to start
+	tmuxType(PI_SESSION, "/ghpr-monitor https://github.com/v2nic/gh-pr-review/pull/42");
+	// Send Enter to submit the command to Pi
+	tmuxSend(PI_SESSION, "");
+	// Wait for the extension to actually produce monitoring output
+	const monitoringStarted = waitForText(PI_SESSION, "Monitoring", 20000);
+	if (!monitoringStarted) {
+		throw new Error("ghpr-monitor extension did not start monitoring within 20 seconds");
+	}
 	captureScreenshot(PI_SESSION, "02-start-monitoring");
+	assertScreenshotContains("02-start-monitoring", "Monitoring");
 
-	// SCENARIO 3: Initial PR status
+	// SCENARIO 3: Initial PR status (2 unresolved threads, 1 pending check, 1 passing)
+	// Wait for at least one poll to happen
 	console.log("\n📋 Scenario 3: Initial PR status");
-	await new Promise((r) => setTimeout(r, 2000)); // Wait for poll
+	// Force an immediate poll
+	tmuxType(PI_SESSION, "/ghpr-monitor check");
+	tmuxSend(PI_SESSION, "");
+	const initialPoll = waitForText(PI_SESSION, "poll", 15000);
+	if (!initialPoll) {
+		// Even if we don't see "poll" in the TUI, the status bar should show monitoring
+		console.log("  (didn't see 'poll' in TUI, checking status bar)");
+	}
+	await new Promise((r) => setTimeout(r, 2000));
 	captureScreenshot(PI_SESSION, "03-initial-pr-status");
 
 	// SCENARIO 4: New review comment
@@ -408,20 +498,27 @@ async function main() {
 	mockState.unresolvedThreads = 3;
 	mockState.generalComments = 2;
 	mockState.lastCommentBody = "This needs to be fixed before merging";
-	await new Promise((r) => setTimeout(r, 2000));
+	// Force a poll to pick up the state change
+	tmuxType(PI_SESSION, "/ghpr-monitor check");
+	tmuxSend(PI_SESSION, "");
+	await new Promise((r) => setTimeout(r, 3000));
 	captureScreenshot(PI_SESSION, "04-new-comment");
 
 	// SCENARIO 5: CI check fails
 	console.log("\n📋 Scenario 5: CI check fails");
 	mockState.failingChecks = ["ci/test"];
 	mockState.pendingChecks = [];
-	await new Promise((r) => setTimeout(r, 2000));
+	tmuxType(PI_SESSION, "/ghpr-monitor check");
+	tmuxSend(PI_SESSION, "");
+	await new Promise((r) => setTimeout(r, 3000));
 	captureScreenshot(PI_SESSION, "05-ci-failing");
 
 	// SCENARIO 6: Merge conflicts
 	console.log("\n📋 Scenario 6: Merge conflicts detected");
 	mockState.hasConflicts = true;
-	await new Promise((r) => setTimeout(r, 2000));
+	tmuxType(PI_SESSION, "/ghpr-monitor check");
+	tmuxSend(PI_SESSION, "");
+	await new Promise((r) => setTimeout(r, 3000));
 	captureScreenshot(PI_SESSION, "06-merge-conflicts");
 
 	// SCENARIO 7: All issues resolved
@@ -432,19 +529,35 @@ async function main() {
 	mockState.failingChecks = [];
 	mockState.pendingChecks = [];
 	mockState.passingChecks = ["ci/test", "ci/build"];
-	await new Promise((r) => setTimeout(r, 2000));
+	tmuxType(PI_SESSION, "/ghpr-monitor check");
+	tmuxSend(PI_SESSION, "");
+	await new Promise((r) => setTimeout(r, 3000));
 	captureScreenshot(PI_SESSION, "07-all-resolved");
 
 	// SCENARIO 8: Stop monitoring
 	console.log("\n📋 Scenario 8: Stop monitoring");
-	tmuxSend(PI_SESSION, "/ghpr-monitor off");
-	await new Promise((r) => setTimeout(r, 2000));
+	tmuxType(PI_SESSION, "/ghpr-monitor off");
+	tmuxSend(PI_SESSION, "");
+	const monitoringStopped = waitForText(PI_SESSION, "Stopped", 10000);
+	if (!monitoringStopped) {
+		// May show "No monitors running" instead
+		console.log("  (waiting for monitors to stop)");
+		await new Promise((r) => setTimeout(r, 3000));
+	}
 	captureScreenshot(PI_SESSION, "08-stop-monitoring");
 
-	// SCENARIO 9: Error handling
+	// SCENARIO 9: Error handling — monitor a non-existent PR
+	// (the mock server returns valid GraphQL for any PR number, so this
+	// tests that the extension handles the /ghpr-monitor command for
+	// an arbitrary PR URL)
 	console.log("\n📋 Scenario 9: Error handling");
-	tmuxSend(PI_SESSION, "/ghpr-monitor https://github.com/v2nic/gh-pr-review/pull/99999");
-	await new Promise((r) => setTimeout(r, 2000));
+	tmuxType(PI_SESSION, "/ghpr-monitor https://github.com/v2nic/gh-pr-review/pull/99999");
+	tmuxSend(PI_SESSION, "");
+	const errorMonitor = waitForText(PI_SESSION, "Monitoring", 10000);
+	if (!errorMonitor) {
+		console.log("  (waiting for second monitor)");
+		await new Promise((r) => setTimeout(r, 3000));
+	}
 	captureScreenshot(PI_SESSION, "09-error-handling");
 
 	// Cleanup
@@ -459,6 +572,18 @@ async function main() {
 	for (const f of files) {
 		const size = fs.statSync(path.join(SCREENSHOT_DIR, f)).size;
 		console.log(`  ${f} (${size} bytes)`);
+	}
+
+	// Validate screenshots are actually different (not all identical)
+	const screenshotHashes = new Set<string>();
+	for (const f of files) {
+		const content = fs.readFileSync(path.join(SCREENSHOT_DIR, f), "utf-8");
+		// Quick hash: first 200 + last 200 chars
+		const hash = content.slice(0, 200) + content.slice(-200);
+		screenshotHashes.add(hash);
+	}
+	if (screenshotHashes.size <= 2 && files.length > 3) {
+		console.warn(`\n⚠️  WARNING: Only ${screenshotHashes.size} unique screenshot(s) out of ${files.length} files. Scenarios may not be producing distinct output.`);
 	}
 
 	// Generate markdown report
