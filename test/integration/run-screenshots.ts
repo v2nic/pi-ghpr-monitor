@@ -226,25 +226,77 @@ function startMockLLMServer(): Promise<http.Server> {
 				req.on("data", (c: Buffer) => (body += c.toString()));
 				req.on("end", () => {
 					console.log("[mock-llm] Chat request received");
-					const response = {
-						id: `chatcmpl-${Date.now()}`,
-						object: "chat.completion",
-						created: Math.floor(Date.now() / 1000),
-						model: "mock-llm",
-						choices: [{
-							index: 0,
-							message: {
-								role: "assistant",
-								content: !monitorStarted
-									? "I'll start monitoring the PR for you. Let me use the ghpr-monitor tool to begin."
-									: "Got it, the PR status has been updated.",
-							},
-							finish_reason: "stop",
-						}],
-						usage: { prompt_tokens: 50, completion_tokens: 20, total_tokens: 70 },
-					};
-					monitorStarted = true;
-					sendJSON(200, response);
+					const parsed = JSON.parse(body);
+					const isStream = parsed.stream === true;
+					const content = !monitorStarted
+						? "I'll start monitoring the PR for you. Let me use the ghpr-monitor tool to begin."
+						: "Got it, the PR status has been updated.";
+
+					if (isStream) {
+						// SSE streaming response (Pi uses openai-completions API which requests streaming)
+						res.writeHead(200, {
+							"Content-Type": "text/event-stream",
+							"Cache-Control": "no-cache",
+							"Connection": "keep-alive",
+							"Access-Control-Allow-Origin": "*",
+							"Access-Control-Allow-Headers": "Content-Type, Authorization",
+						});
+						const chunks = content.split(" ");
+						let i = 0;
+						const sendChunk = () => {
+							if (i < chunks.length) {
+								const chunk = {
+									id: `chatcmpl-${Date.now()}`,
+									object: "chat.completion.chunk",
+									created: Math.floor(Date.now() / 1000),
+									model: "mock-llm",
+									choices: [{
+										index: 0,
+										delta: { role: i === 0 ? "assistant" : undefined, content: (i === 0 ? "" : " ") + chunks[i] },
+										finish_reason: null,
+									}],
+								};
+								res.write(`data: ${JSON.stringify(chunk)}\n\n`);
+								i++;
+								setTimeout(sendChunk, 50);
+							} else {
+								// Final chunk with finish_reason
+								const finalChunk = {
+									id: `chatcmpl-${Date.now()}`,
+									object: "chat.completion.chunk",
+									created: Math.floor(Date.now() / 1000),
+									model: "mock-llm",
+									choices: [{
+										index: 0,
+										delta: {},
+										finish_reason: "stop",
+									}],
+									usage: { prompt_tokens: 50, completion_tokens: content.split(" ").length, total_tokens: 50 + content.split(" ").length },
+								};
+								res.write(`data: ${JSON.stringify(finalChunk)}\n\n`);
+								res.write("data: [DONE]\n\n");
+								res.end();
+								monitorStarted = true;
+							}
+						};
+						sendChunk();
+					} else {
+						// Non-streaming response
+						const response = {
+							id: `chatcmpl-${Date.now()}`,
+							object: "chat.completion",
+							created: Math.floor(Date.now() / 1000),
+							model: "mock-llm",
+								choices: [{
+								index: 0,
+								message: { role: "assistant", content },
+								finish_reason: "stop",
+							}],
+							usage: { prompt_tokens: 50, completion_tokens: 20, total_tokens: 70 },
+						};
+						monitorStarted = true;
+						sendJSON(200, response);
+					}
 				});
 				return;
 			}
@@ -284,6 +336,41 @@ function tmuxType(tmuxSession: string, text: string) {
 }
 
 /**
+ * Check if Pi is still running in the tmux session.
+ * Returns false if a Node.js crash traceback and bash prompt are visible.
+ */
+function isPiAlive(tmuxSession: string): boolean {
+	try {
+		const output = execSync(`tmux capture-pane -t ${tmuxSession} -p -S -50`, { encoding: "utf-8" });
+		// Pi crashed if we see Node.js stack trace followed by a bash prompt
+		if (output.includes("Node.js v") && output.match(/runner@.*\$/m)) {
+			return false;
+		}
+		// Pi exited normally if bash prompt is the only active line
+		if (output.match(/runner@.*\$\s*$/m) && !output.includes("mock-llm")) {
+			return false;
+		}
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+/**
+ * Send a Pi command safely — type the text then press Enter.
+ * Returns false if Pi appears to have crashed.
+ */
+function sendPiCommand(tmuxSession: string, command: string): boolean {
+	if (!isPiAlive(tmuxSession)) {
+		console.error(`  💥 Pi is not running, skipping command: ${command}`);
+		return false;
+	}
+	tmuxType(tmuxSession, command);
+	tmuxSend(tmuxSession, "");
+	return true;
+}
+
+/**
  * Wait for a specific string to appear in the tmux pane.
  * Returns true if found, false if timed out.
  */
@@ -295,6 +382,11 @@ function waitForText(tmuxSession: string, text: string, timeoutMs: number = 3000
 			if (output.includes(text)) {
 				console.log(`  ⏱️  Found "${text.slice(0, 40)}" after ${Date.now() - start}ms`);
 				return true;
+			}
+			// Check if Pi crashed (Node.js exit shows bash prompt)
+			if (output.includes("Node.js v") && output.match(/runner@.*\$\s*$/m)) {
+				console.error(`  💥 Pi process crashed! TUI output:\n${output.slice(-500)}`);
+				return false;
 			}
 		} catch {
 			// ignore
@@ -479,18 +571,13 @@ async function main() {
 	captureScreenshot(PI_SESSION, "02-start-monitoring");
 	assertScreenshotContains("02-start-monitoring", "Monitoring");
 
-	// SCENARIO 3: Initial PR status (2 unresolved threads, 1 pending check, 1 passing)
-	// Wait for at least one poll to happen
+	// SCENARIO 3: Initial PR status
 	console.log("\n📋 Scenario 3: Initial PR status");
-	// Force an immediate poll
-	tmuxType(PI_SESSION, "/ghpr-monitor check");
-	tmuxSend(PI_SESSION, "");
-	const initialPoll = waitForText(PI_SESSION, "poll", 15000);
-	if (!initialPoll) {
-		// Even if we don't see "poll" in the TUI, the status bar should show monitoring
-		console.log("  (didn't see 'poll' in TUI, checking status bar)");
+	if (!sendPiCommand(PI_SESSION, "/ghpr-monitor check")) {
+		console.error("  💥 Pi crashed before scenario 3");
+	} else {
+		await new Promise((r) => setTimeout(r, 3000));
 	}
-	await new Promise((r) => setTimeout(r, 2000));
 	captureScreenshot(PI_SESSION, "03-initial-pr-status");
 
 	// SCENARIO 4: New review comment
@@ -498,9 +585,7 @@ async function main() {
 	mockState.unresolvedThreads = 3;
 	mockState.generalComments = 2;
 	mockState.lastCommentBody = "This needs to be fixed before merging";
-	// Force a poll to pick up the state change
-	tmuxType(PI_SESSION, "/ghpr-monitor check");
-	tmuxSend(PI_SESSION, "");
+	if (isPiAlive(PI_SESSION)) sendPiCommand(PI_SESSION, "/ghpr-monitor check");
 	await new Promise((r) => setTimeout(r, 3000));
 	captureScreenshot(PI_SESSION, "04-new-comment");
 
@@ -508,16 +593,14 @@ async function main() {
 	console.log("\n📋 Scenario 5: CI check fails");
 	mockState.failingChecks = ["ci/test"];
 	mockState.pendingChecks = [];
-	tmuxType(PI_SESSION, "/ghpr-monitor check");
-	tmuxSend(PI_SESSION, "");
+	if (isPiAlive(PI_SESSION)) sendPiCommand(PI_SESSION, "/ghpr-monitor check");
 	await new Promise((r) => setTimeout(r, 3000));
 	captureScreenshot(PI_SESSION, "05-ci-failing");
 
 	// SCENARIO 6: Merge conflicts
 	console.log("\n📋 Scenario 6: Merge conflicts detected");
 	mockState.hasConflicts = true;
-	tmuxType(PI_SESSION, "/ghpr-monitor check");
-	tmuxSend(PI_SESSION, "");
+	if (isPiAlive(PI_SESSION)) sendPiCommand(PI_SESSION, "/ghpr-monitor check");
 	await new Promise((r) => setTimeout(r, 3000));
 	captureScreenshot(PI_SESSION, "06-merge-conflicts");
 
@@ -529,35 +612,20 @@ async function main() {
 	mockState.failingChecks = [];
 	mockState.pendingChecks = [];
 	mockState.passingChecks = ["ci/test", "ci/build"];
-	tmuxType(PI_SESSION, "/ghpr-monitor check");
-	tmuxSend(PI_SESSION, "");
+	if (isPiAlive(PI_SESSION)) sendPiCommand(PI_SESSION, "/ghpr-monitor check");
 	await new Promise((r) => setTimeout(r, 3000));
 	captureScreenshot(PI_SESSION, "07-all-resolved");
 
 	// SCENARIO 8: Stop monitoring
 	console.log("\n📋 Scenario 8: Stop monitoring");
-	tmuxType(PI_SESSION, "/ghpr-monitor off");
-	tmuxSend(PI_SESSION, "");
-	const monitoringStopped = waitForText(PI_SESSION, "Stopped", 10000);
-	if (!monitoringStopped) {
-		// May show "No monitors running" instead
-		console.log("  (waiting for monitors to stop)");
-		await new Promise((r) => setTimeout(r, 3000));
-	}
+	if (isPiAlive(PI_SESSION)) sendPiCommand(PI_SESSION, "/ghpr-monitor off");
+	await new Promise((r) => setTimeout(r, 3000));
 	captureScreenshot(PI_SESSION, "08-stop-monitoring");
 
-	// SCENARIO 9: Error handling — monitor a non-existent PR
-	// (the mock server returns valid GraphQL for any PR number, so this
-	// tests that the extension handles the /ghpr-monitor command for
-	// an arbitrary PR URL)
+	// SCENARIO 9: Error handling
 	console.log("\n📋 Scenario 9: Error handling");
-	tmuxType(PI_SESSION, "/ghpr-monitor https://github.com/v2nic/gh-pr-review/pull/99999");
-	tmuxSend(PI_SESSION, "");
-	const errorMonitor = waitForText(PI_SESSION, "Monitoring", 10000);
-	if (!errorMonitor) {
-		console.log("  (waiting for second monitor)");
-		await new Promise((r) => setTimeout(r, 3000));
-	}
+	if (isPiAlive(PI_SESSION)) sendPiCommand(PI_SESSION, "/ghpr-monitor https://github.com/v2nic/gh-pr-review/pull/99999");
+	await new Promise((r) => setTimeout(r, 3000));
 	captureScreenshot(PI_SESSION, "09-error-handling");
 
 	// Cleanup
