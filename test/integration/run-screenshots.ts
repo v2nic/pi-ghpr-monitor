@@ -424,7 +424,7 @@ async function main() {
 	console.log("4. Starting Pi agent in tmux...");
 	tmuxSend(
 		PI_SESSION,
-		`cd ${projectDir} && PI_CODING_AGENT_DIR=${PI_DIR} PI_OFFLINE=1 GHPR_MOCK_BASE_URL=http://localhost:${MOCK_GH_PORT} GHPR_MONITOR_INTERVAL_SECS=${POLL_INTERVAL_SECS} npx pi --provider mock --model mock-llm --no-session --extension ./dist/index.js`,
+		`cd ${projectDir} && PI_CODING_AGENT_DIR=${PI_DIR} PI_OFFLINE=1 GHPR_MOCK_BASE_URL=http://localhost:${MOCK_GH_PORT} GHPR_MONITOR_INTERVAL_SECS=${POLL_INTERVAL_SECS} npx pi --provider mock --model mock-llm --no-session --no-tools --extension ./dist/index.js`,
 	);
 
 	// SCENARIO 1: Wait for Pi to fully start up and show the extension loaded
