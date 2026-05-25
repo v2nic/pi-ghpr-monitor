@@ -566,4 +566,4 @@ main().catch((err) => {
 	// Try cleanup
 	try { execSync(`tmux kill-session -t ${PI_SESSION} 2>/dev/null || true`); } catch {}
 	process.exit(1);
-});
+});# add a comment to run-screenshots.ts
