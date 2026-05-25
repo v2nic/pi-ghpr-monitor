@@ -18,7 +18,10 @@
     ]
   },
   "devDependencies": {
-    "@mariozechner/pi-coding-agent": "^0.73.1",
+    "@earendil-works/pi-agent-core": "^0.75.5",
+    "@earendil-works/pi-ai": "^0.75.5",
+    "@earendil-works/pi-coding-agent": "^0.75.5",
+    "@earendil-works/pi-tui": "^0.75.5",
     "@sinclair/typebox": "^0.34.49",
     "@types/node": "^25.6.0",
     "esbuild": "^0.28.0",
