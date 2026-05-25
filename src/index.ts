@@ -277,6 +277,7 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 
 	// For testing: allows pointing at a mock server
 	let mockBaseUrl: string | undefined = process.env.GHPR_MOCK_BASE_URL;
+	const NO_AGENT = !!process.env.PI_GHPR_NO_AGENT;
 
 	// For testing: allows reducing the polling interval
 	const MOCK_INTERVAL_SECS = process.env.GHPR_MONITOR_INTERVAL_SECS ? parseInt(process.env.GHPR_MONITOR_INTERVAL_SECS, 10) : undefined;
@@ -310,12 +311,14 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 
 	/** Send a PR status notification with enriched content for the agent and concise summary for the TUI. */
 	function sendPRNotification(concise: string, detailed: string, options?: { deliverAs?: "steer" | "followUp" }) {
+		const delivery = NO_AGENT ? undefined : (options?.deliverAs ?? "steer");
+		const msgOptions = delivery ? { deliverAs: delivery } : undefined;
 		pi.sendMessage({
 			customType: "ghpr-monitor",
 			content: detailed,
 			display: true,
 			details: { concise },
-		}, { deliverAs: options?.deliverAs ?? "steer" });
+		}, msgOptions);
 	}
 
 	// Track agent turn state to avoid spamming updates while LLM is working
@@ -755,7 +758,7 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 					ctx.ui.notify(result.message, "success");
 				}
 				if (steerMessage) {
-					pi.sendUserMessage(steerMessage, { deliverAs: "steer" });
+					pi.sendUserMessage(steerMessage, NO_AGENT ? {} : { deliverAs: "steer" });
 				}
 				return;
 			}
@@ -808,7 +811,7 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 					ctx.ui.notify(result.message, "success");
 				}
 				if (steerMessage) {
-					pi.sendUserMessage(steerMessage, { deliverAs: "steer" });
+					pi.sendUserMessage(steerMessage, NO_AGENT ? {} : { deliverAs: "steer" });
 				}
 				return;
 			}
