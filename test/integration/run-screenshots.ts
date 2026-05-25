@@ -433,6 +433,7 @@ function setupPiConfig() {
 		enabledModels: ["mock/mock-llm"],
 		hideThinkingBlock: true,
 		theme: "dark",
+		compaction: { enabled: false },
 	}, null, 2));
 
 	console.log("  📝 Pi config written to", PI_DIR);
