@@ -345,7 +345,7 @@ function buildScreenshotReport(files: string[]): string {
 	const lines: string[] = [
 		"# Tmux Screenshots",
 		"",
-		"Integration test scenarios captured from a real Pi agent session in tmux.",
+		"Integration test with Pi 0.75.5 + PI_GHPR_NO_AGENT env var.",
 		"Pi was started with the ghpr-monitor extension and `GHPR_MOCK_BASE_URL`",
 		"pointing at a mock GitHub server. The mock LLM server is intentionally NOT",
 		"started to avoid a Pi v0.75.5 compaction bug. The `/ghpr-monitor` command",
