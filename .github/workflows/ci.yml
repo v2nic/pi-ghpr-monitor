@@ -37,9 +37,6 @@ jobs:
       - name: Build extension bundle
         run: npx esbuild src/index.ts --bundle --platform=node --target=node22 --outfile=dist/index.js --external:@mariozechner/pi-ai --external:@mariozechner/pi-tui --external:@mariozechner/pi-agent-core --external:@sinclair/typebox
 
-      - name: Install Pi agent
-        run: npm install --no-save @mariozechner/pi-coding-agent
-
       - name: Install tmux
         run: sudo apt-get update && sudo apt-get install -y tmux
 
@@ -66,7 +63,7 @@ jobs:
         with:
           script: |
             const fs = require('fs');
-            const reportPath = '${{ github.workspace }}/test/integration/screenshots/screenshots-report.md';
+            const reportPath = '${{ github.workspace }}/test/integration/screenshots/screenshots-report-truncated.md';
             let report = '';
             let conclusion = 'success';
             try {

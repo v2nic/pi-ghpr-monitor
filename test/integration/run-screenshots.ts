@@ -383,7 +383,7 @@ async function main() {
 
 	// Start Pi in tmux
 	console.log("4. Starting Pi agent in tmux...");
-	tmuxSend(PI_SESSION, `cd ${projectDir} && PI_CODING_AGENT_DIR=${PI_DIR} PI_OFFLINE=1 npx pi --provider mock --model mock-llm --no-session --extension ./dist/index.js >/dev/null 2>&1 &`);
+	tmuxSend(PI_SESSION, `cd ${projectDir} && PI_CODING_AGENT_DIR=${PI_DIR} PI_OFFLINE=1 npx pi --provider mock --model mock-llm --no-session --extension ./dist/index.js`);
 	await new Promise((r) => setTimeout(r, 3000)); // Give Pi time to start
 
 	// SCENARIO 1: Extension loaded
@@ -464,6 +464,15 @@ async function main() {
 	const reportPath = path.join(SCREENSHOT_DIR, "screenshots-report.md");
 	fs.writeFileSync(reportPath, report + "\n");
 	console.log(`\n📄 Screenshot report written to: ${reportPath}`);
+
+	// GitHub check runs have a ~65k character limit on output.summary.
+	// Write a truncated version for the check run, full version for the artifact.
+	const MAX_CHECK_SUMMARY = 65000;
+	const truncatedReport = report.length > MAX_CHECK_SUMMARY
+		? report.slice(0, MAX_CHECK_SUMMARY) + "\n\n... (see the tmux-screenshots artifact for full output)"
+		: report;
+	const truncatedReportPath = path.join(SCREENSHOT_DIR, "screenshots-report-truncated.md");
+	fs.writeFileSync(truncatedReportPath, truncatedReport + "\n");
 
 	const stepSummary = process.env.GITHUB_STEP_SUMMARY;
 	if (stepSummary) {
