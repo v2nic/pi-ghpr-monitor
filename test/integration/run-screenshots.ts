@@ -22,7 +22,6 @@ import path from "node:path";
 import http from "node:http";
 
 const MOCK_GH_PORT = parseInt(process.env.MOCK_GH_PORT || "9700", 10);
-const MOCK_LLM_PORT = parseInt(process.env.MOCK_LLM_PORT || "9701", 10);
 const SCREENSHOT_DIR = process.argv[2] || path.join(__dirname, "screenshots");
 const PI_SESSION = "pi-ghpr-test";
 const PI_DIR = path.join(__dirname, ".pi-integration");
@@ -195,123 +194,6 @@ function startMockGitHubServer(): Promise<http.Server> {
 }
 
 // ---------------------------------------------------------------------------
-// Mock LLM Server
-// ---------------------------------------------------------------------------
-
-function startMockLLMServer(): Promise<http.Server> {
-	return new Promise((resolve) => {
-		let monitorStarted = false;
-
-		const server = http.createServer((req, res) => {
-			const sendJSON = (code: number, body: unknown) => {
-				res.writeHead(code, { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "Content-Type, Authorization" });
-				res.end(JSON.stringify(body));
-			};
-
-			if (req.method === "OPTIONS") {
-				res.writeHead(204, { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS", "Access-Control-Allow-Headers": "Content-Type, Authorization" });
-				res.end();
-				return;
-			}
-
-			const url = new URL(req.url || "/", `http://localhost:${MOCK_LLM_PORT}`);
-
-			if (req.method === "GET" && url.pathname === "/v1/models") {
-				sendJSON(200, { object: "list", data: [{ id: "mock-llm", object: "model", created: Math.floor(Date.now() / 1000), owned_by: "test" }] });
-				return;
-			}
-
-			if (req.method === "POST" && url.pathname === "/v1/chat/completions") {
-				let body = "";
-				req.on("data", (c: Buffer) => (body += c.toString()));
-				req.on("end", () => {
-					console.log("[mock-llm] Chat request received");
-					const parsed = JSON.parse(body);
-					const isStream = parsed.stream === true;
-					const content = !monitorStarted
-						? "I'll start monitoring the PR for you. Let me use the ghpr-monitor tool to begin."
-						: "Got it, the PR status has been updated.";
-
-					if (isStream) {
-						// SSE streaming response (Pi uses openai-completions API which requests streaming)
-						res.writeHead(200, {
-							"Content-Type": "text/event-stream",
-							"Cache-Control": "no-cache",
-							"Connection": "keep-alive",
-							"Access-Control-Allow-Origin": "*",
-							"Access-Control-Allow-Headers": "Content-Type, Authorization",
-						});
-						const chunks = content.split(" ");
-						let i = 0;
-						const sendChunk = () => {
-							if (i < chunks.length) {
-								const chunk = {
-									id: `chatcmpl-${Date.now()}`,
-									object: "chat.completion.chunk",
-									created: Math.floor(Date.now() / 1000),
-									model: "mock-llm",
-									choices: [{
-										index: 0,
-										delta: { role: i === 0 ? "assistant" : undefined, content: (i === 0 ? "" : " ") + chunks[i] },
-										finish_reason: null,
-									}],
-								};
-								res.write(`data: ${JSON.stringify(chunk)}\n\n`);
-								i++;
-								setTimeout(sendChunk, 50);
-							} else {
-								// Final chunk with finish_reason
-								const finalChunk = {
-									id: `chatcmpl-${Date.now()}`,
-									object: "chat.completion.chunk",
-									created: Math.floor(Date.now() / 1000),
-									model: "mock-llm",
-									choices: [{
-										index: 0,
-										delta: {},
-										finish_reason: "stop",
-									}],
-									usage: { prompt_tokens: 50, completion_tokens: content.split(" ").length, total_tokens: 50 + content.split(" ").length },
-								};
-								res.write(`data: ${JSON.stringify(finalChunk)}\n\n`);
-								res.write("data: [DONE]\n\n");
-								res.end();
-								monitorStarted = true;
-							}
-						};
-						sendChunk();
-					} else {
-						// Non-streaming response
-						const response = {
-							id: `chatcmpl-${Date.now()}`,
-							object: "chat.completion",
-							created: Math.floor(Date.now() / 1000),
-							model: "mock-llm",
-								choices: [{
-								index: 0,
-								message: { role: "assistant", content },
-								finish_reason: "stop",
-							}],
-							usage: { prompt_tokens: 50, completion_tokens: 20, total_tokens: 70 },
-						};
-						monitorStarted = true;
-						sendJSON(200, response);
-					}
-				});
-				return;
-			}
-
-			sendJSON(404, { error: { message: "Not found" } });
-		});
-
-		server.listen(MOCK_LLM_PORT, () => {
-			console.log(`[mock-llm] Listening on http://localhost:${MOCK_LLM_PORT}`);
-			resolve(server);
-		});
-	});
-}
-
-// ---------------------------------------------------------------------------
 // Screenshot & tmux helpers
 // ---------------------------------------------------------------------------
 
@@ -406,13 +288,18 @@ function setupPiConfig() {
 	// PI_CODING_AGENT_DIR points directly to the directory containing models.json/settings.json
 	fs.mkdirSync(PI_DIR, { recursive: true });
 
-	// models.json: custom "mock" provider pointing at our mock LLM server
+	// models.json: custom "mock" provider.
+	// The LLM port is intentionally NOT listening — this prevents Pi's agent
+	// from making LLM calls that trigger the estimateContextTokens crash
+	// (Pi v0.75.5 bug: TypeError: message.content is not iterable).
+	// The /ghpr-monitor command is handled by Pi's command handler directly,
+	// so no LLM is needed for the extension to work.
 	fs.writeFileSync(path.join(PI_DIR, "models.json"), JSON.stringify({
 		providers: {
 			mock: {
 				api: "openai-completions",
 				apiKey: "mock-key",
-				baseUrl: `http://localhost:${MOCK_LLM_PORT}/v1`,
+				baseUrl: "http://localhost:19999/v1",
 				models: [{
 					id: "mock-llm",
 					name: "Mock LLM",
@@ -459,9 +346,10 @@ function buildScreenshotReport(files: string[]): string {
 		"# Tmux Screenshots",
 		"",
 		"Integration test scenarios captured from a real Pi agent session in tmux.",
-		"Pi was started with mock GitHub and LLM servers. The extension was",
-		"configured with `GHPR_MOCK_BASE_URL` to route `gh api graphql` calls",
-		"to the mock server, and `GHPR_MONITOR_INTERVAL_SECS=5` for fast polling.",
+		"Pi was started with the ghpr-monitor extension and `GHPR_MOCK_BASE_URL`",
+		"pointing at a mock GitHub server. The mock LLM server is intentionally NOT",
+		"started to avoid a Pi v0.75.5 compaction bug. The `/ghpr-monitor` command",
+		"is handled by Pi's command handler directly (no LLM needed).",
 		"",
 	];
 
@@ -516,8 +404,6 @@ async function main() {
 	// Start mock servers
 	console.log("1. Starting mock GitHub server...");
 	const ghServer = await startMockGitHubServer();
-	console.log("2. Starting mock LLM server...");
-	const llmServer = await startMockLLMServer();
 
 	// Create tmux session
 	console.log("3. Creating tmux session...");
@@ -632,7 +518,6 @@ async function main() {
 	console.log("\n🧹 Cleaning up...");
 	execSync(`tmux kill-session -t ${PI_SESSION} 2>/dev/null || true`);
 	ghServer.close();
-	llmServer.close();
 
 	console.log(`\n✅ Integration test complete! Screenshots saved to: ${SCREENSHOT_DIR}`);
 	const files = fs.readdirSync(SCREENSHOT_DIR).filter((f) => f.endsWith(".txt")).sort();
