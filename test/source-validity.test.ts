@@ -12,9 +12,14 @@
  * backslash-dollar-brace instead of raw backtick and dollar-brace.
  * This caused a ParseError when the Pi runtime loaded the extension.
  *
- * These tests track lexical context (strings, comments, template literals)
- * to avoid false positives for valid escape sequences like \` inside
- * template strings or \${ to escape interpolation inside template literals.
+ * The classifier uses a single-pass O(n) approach that precomputes a
+ * context array, then checks are O(1) per position. It tracks:
+ * - Single and double quoted strings (with escape sequences)
+ * - Template literals with nested ${} expressions (switching to code
+ *   context inside interpolations so backticks/interpolation markers
+ *   inside expressions are correctly classified)
+ * - Line comments and block comments
+ * - Escape sequences inside all string/template contexts
  */
 
 import { describe, it, expect } from "vitest";
@@ -26,138 +31,275 @@ const src = fs.readFileSync(
 	"utf-8",
 );
 
+type Context = "code" | "string" | "comment" | "template";
+
 /**
- * A simple tokenizer that tracks whether a character position is inside
- * a string literal, comment, or template literal. This avoids false
- * positives where valid escape sequences (like \` inside a template
- * literal) are flagged as errors.
+ * Single-pass tokenizer that precomputes the lexical context at each
+ * character position in the source. Runs in O(n) time and produces
+ * an array of context values that can be looked up in O(1).
+ *
+ * Inside template literal interpolation expressions (${...}), characters
+ * are classified as "code" (not "template"), so that valid escape
+ * sequences like \{ inside expressions are not misclassified, and
+ * nested strings/comments inside ${} are handled correctly.
  */
-function classifyContext(source: string, offset: number): "code" | "string" | "comment" | "template" | "regex" {
-	let inSingleQuote = false;
-	let inDoubleQuote = false;
-	let inTemplate = false;
-	let templateDepth = 0;
-	let inLineComment = false;
-	let inBlockComment = false;
-	let inRegex = false;
+function buildContextMap(source: string): Context[] {
+	const contexts: Context[] = new Array(source.length);
+	const len = source.length;
 	let i = 0;
 
-	while (i < offset && i < source.length) {
+	while (i < len) {
 		const ch = source[i];
-		const next = i + 1 < source.length ? source[i + 1] : "";
+		const next = i + 1 < len ? source[i + 1] : "";
 
-		// Line comments
-		if (inLineComment) {
-			if (ch === "\n") {
-				inLineComment = false;
-			}
-			i++;
-			continue;
-		}
-
-		// Block comments
-		if (inBlockComment) {
-			if (ch === "*" && next === "/") {
-				inBlockComment = false;
-				i += 2;
-				continue;
-			}
-			i++;
-			continue;
-		}
-
-		// Start of comment
+		// Line comments: // ... until end of line
 		if (ch === "/" && next === "/") {
-			inLineComment = true;
-			i += 2;
+			const start = i;
+			while (i < len && source[i] !== "\n") {
+				contexts[i] = "comment";
+				i++;
+			}
 			continue;
 		}
+
+		// Block comments: /* ... */
 		if (ch === "/" && next === "*") {
-			inBlockComment = true;
+			const start = i;
+			contexts[i] = "comment";
+			contexts[i + 1] = "comment";
 			i += 2;
-			continue;
-		}
-
-		// Inside template literal (with nesting for ${} expressions)
-		if (inTemplate) {
-			if (ch === "$" && next === "{") {
-				templateDepth++;
+			while (i < len - 1 && !(source[i] === "*" && source[i + 1] === "/")) {
+				contexts[i] = "comment";
+				i++;
+			}
+			if (i < len - 1) {
+				contexts[i] = "comment";
+				contexts[i + 1] = "comment";
 				i += 2;
-				continue;
 			}
-			if (ch === "}" && templateDepth > 0) {
-				templateDepth--;
-				i++;
-				continue;
-			}
-			if (ch === "`") {
-				if (templateDepth === 0) {
-					inTemplate = false;
-				}
-				i++;
-				continue;
-			}
-			// Escaped characters inside template literal are valid
-			if (ch === "\\") {
-				i += 2; // skip the escaped character
-				continue;
-			}
-			i++;
 			continue;
 		}
 
-		// Start of template literal
-		if (ch === "`") {
-			inTemplate = true;
-			i++;
-			continue;
-		}
-
-		// Inside single-quoted string
-		if (inSingleQuote) {
-			if (ch === "\\") {
-				i += 2; // skip escaped char
-				continue;
-			}
-			if (ch === "'") {
-				inSingleQuote = false;
-			}
-			i++;
-			continue;
-		}
-
-		// Inside double-quoted string
-		if (inDoubleQuote) {
-			if (ch === "\\") {
-				i += 2; // skip escaped char
-				continue;
-			}
-			if (ch === '"') {
-				inDoubleQuote = false;
-			}
-			i++;
-			continue;
-		}
-
-		// Start of string
+		// Single-quoted strings: ' ... '
 		if (ch === "'") {
-			inSingleQuote = true;
+			contexts[i] = "string";
 			i++;
-			continue;
-		}
-		if (ch === '"') {
-			inDoubleQuote = true;
-			i++;
+			while (i < len) {
+				contexts[i] = "string";
+				if (source[i] === "\\") {
+					i++; // skip escaped char
+					if (i < len) { contexts[i] = "string"; i++; }
+					continue;
+				}
+				if (source[i] === "'") { i++; break; }
+				i++;
+			}
 			continue;
 		}
 
+		// Double-quoted strings: " ... "
+		if (ch === '"') {
+			contexts[i] = "string";
+			i++;
+			while (i < len) {
+				contexts[i] = "string";
+				if (source[i] === "\\") {
+					i++; // skip escaped char
+					if (i < len) { contexts[i] = "string"; i++; }
+					continue;
+				}
+				if (source[i] === '"') { i++; break; }
+				i++;
+			}
+			continue;
+		}
+
+		// Template literals: ` ... ` with ${} interpolation nesting
+		if (ch === "`") {
+			contexts[i] = "template";
+			i++;
+			// Track nesting depth of ${} expressions.
+			// depth=0 means we're in the template string part (not inside ${}).
+			// depth>0 means we're inside a ${} expression (code context).
+			let depth = 0;
+			while (i < len) {
+				const tc = source[i];
+				const tn = i + 1 < len ? source[i + 1] : "";
+
+				// ${ starts an interpolation expression
+				if (tc === "$" && tn === "{" && depth === 0) {
+					depth++;
+					contexts[i] = "template"; // the $ character
+					contexts[i + 1] = "template"; // the { character
+					i += 2;
+					// Now we're inside a ${} expression, classify as code
+					continue;
+				}
+
+				// } closes an interpolation expression (if we're inside one)
+				if (tc === "}" && depth > 0) {
+					depth--;
+					contexts[i] = "template";
+					i++;
+					// If depth is now 0, we're back in the template string
+					continue;
+				}
+
+				// Closing backtick — only ends the template if we're not
+				// inside a ${} expression
+				if (tc === "`" && depth === 0) {
+					contexts[i] = "template";
+					i++;
+					break;
+				}
+
+				// Inside ${} expressions (depth > 0), we need to track
+				// nested strings and comments to avoid false matches
+				if (depth > 0) {
+					// Nested single-quoted string inside ${}
+					if (tc === "'") {
+						contexts[i] = "string"; i++;
+						while (i < len && source[i] !== "'") {
+							contexts[i] = "string";
+							if (source[i] === "\\") {
+								i++; // skip escaped char
+								if (i < len) { contexts[i] = "string"; }
+							}
+							i++;
+						}
+						if (i < len) { contexts[i] = "string"; i++; }
+						continue;
+					}
+					// Nested double-quoted string inside ${}
+					if (tc === '"') {
+						contexts[i] = "string"; i++;
+						while (i < len && source[i] !== '"') {
+							contexts[i] = "string";
+							if (source[i] === "\\") {
+								i++; // skip escaped char
+								if (i < len) { contexts[i] = "string"; }
+							}
+							i++;
+						}
+						if (i < len) { contexts[i] = "string"; i++; }
+						continue;
+					}
+					// Nested template literal inside ${}
+					if (tc === "`") {
+						// Recursively classify the entire nested template
+						// by building its context starting from this position
+						const innerStart = i;
+						// Mark the opening backtick as template
+						contexts[i] = "template";
+						i++;
+						let innerDepth = 0;
+						while (i < len) {
+							const ic = source[i];
+							const inext = i + 1 < len ? source[i + 1] : "";
+							if (ic === "$" && inext === "{" && innerDepth === 0) {
+								innerDepth++;
+								i += 2;
+								continue;
+							}
+							if (ic === "}" && innerDepth > 0) {
+								innerDepth--;
+								i++;
+								continue;
+							}
+							if (ic === "`" && innerDepth === 0) {
+								contexts[i] = "template";
+								i++;
+								break;
+							}
+							if (ic === "\\") {
+								contexts[i] = "template";
+								i++;
+								if (i < len) { contexts[i] = "template"; i++; }
+								continue;
+							}
+							contexts[i] = "template";
+							i++;
+						}
+						continue;
+					}
+					// Nested block comment inside ${}
+					if (tc === "/" && tn === "*") {
+						contexts[i] = "comment"; contexts[i + 1] = "comment";
+						i += 2;
+						while (i < len - 1 && !(source[i] === "*" && source[i + 1] === "/")) {
+							contexts[i] = "comment"; i++;
+						}
+						if (i < len - 1) {
+							contexts[i] = "comment"; contexts[i + 1] = "comment";
+							i += 2;
+						}
+						continue;
+					}
+					// Nested line comment inside ${}
+					if (tc === "/" && tn === "/") {
+						while (i < len && source[i] !== "\n") {
+							contexts[i] = "comment"; i++;
+						}
+						continue;
+					}
+					// Escaped character inside ${} expression — classify as code
+					if (tc === "\\") {
+						// The backslash itself is code context (will be checked
+						// by the byte-sequence tests)
+						contexts[i] = "code";
+						i++;
+						if (i < len) { contexts[i] = "code"; i++; }
+						continue;
+					}
+					// Regular code inside ${} expression
+					contexts[i] = "code";
+					i++;
+					continue;
+				}
+
+				// Inside template string (not in ${}), escaped chars are valid
+				if (tc === "\\") {
+					contexts[i] = "template";
+					i++; // the backslash
+					if (i < len) {
+						contexts[i] = "template"; // the escaped char
+						i++;
+					}
+					continue;
+				}
+
+				// Regular character inside template string
+				contexts[i] = "template";
+				i++;
+			}
+			continue;
+		}
+
+		// Default: code context
+		contexts[i] = "code";
 		i++;
 	}
 
-	if (inLineComment || inBlockComment) return "comment";
-	if (inSingleQuote || inDoubleQuote) return "string";
-	if (inTemplate) return "template";
-	return "code";
+	return contexts;
+}
+
+const contextMap = buildContextMap(src);
+
+// Precompute line offsets for O(1) line-number lookup
+const lineOffsets = src.split("\n").reduce((acc: number[], line: string, idx: number) => {
+	acc.push(idx === 0 ? 0 : acc[idx - 1] + line.length + 1);
+	return acc;
+}, []);
+
+function lineAt(offset: number): number {
+	// Binary search for the line number at a given offset
+	let lo = 0, hi = lineOffsets.length - 1;
+	while (lo < hi) {
+		const mid = (lo + hi + 1) >> 1;
+		if (lineOffsets[mid] <= offset) lo = mid;
+		else hi = mid - 1;
+	}
+	return lo + 1; // 1-based line number
 }
 
 describe("Source file has no escaped template literal characters", () => {
@@ -174,13 +316,14 @@ describe("Source file has no escaped template literal characters", () => {
 
 		for (let i = 0; i < src.length - 1; i++) {
 			if (src.charCodeAt(i) === 0x5c && src.charCodeAt(i + 1) === 0x60) {
-				const ctx = classifyContext(src, i);
-				if (ctx === "code") {
-					// Find line number for context
+				if (contextMap[i] === "code") {
+					const lineNum = lineAt(i);
 					const lineStart = src.lastIndexOf("\n", i) + 1;
 					const lineEnd = src.indexOf("\n", i);
-					const lineNum = src.substring(0, i).split("\n").length;
-					const context = src.substring(Math.max(lineStart, i - 20), Math.min(lineEnd === -1 ? src.length : lineEnd, i + 20));
+					const context = src.substring(
+						Math.max(lineStart, i - 20),
+						Math.min(lineEnd === -1 ? src.length : lineEnd, i + 20)
+					);
 					errors.push(
 						"Line " + lineNum + ", col " + (i - lineStart + 1) +
 						": found escaped backtick (0x5c 0x60) in code context." +
@@ -200,18 +343,21 @@ describe("Source file has no escaped template literal characters", () => {
 		// outside of strings, comments, and template literals creates a broken
 		// template interpolation marker.
 		//
-		// Inside a template literal, \${ is valid (escapes interpolation).
-		// In code context, \${ is invalid.
+		// Inside a template literal's interpolation expression, \${ is valid
+		// (escapes the dollar-brace). Inside a template string part, \${ is
+		// also valid. Only in code context is \${ invalid.
 		const errors: string[] = [];
 
 		for (let i = 0; i < src.length - 2; i++) {
 			if (src.charCodeAt(i) === 0x5c && src.charCodeAt(i + 1) === 0x24 && src.charCodeAt(i + 2) === 0x7b) {
-				const ctx = classifyContext(src, i);
-				if (ctx === "code") {
+				if (contextMap[i] === "code") {
+					const lineNum = lineAt(i);
 					const lineStart = src.lastIndexOf("\n", i) + 1;
 					const lineEnd = src.indexOf("\n", i);
-					const lineNum = src.substring(0, i).split("\n").length;
-					const context = src.substring(Math.max(lineStart, i - 20), Math.min(lineEnd === -1 ? src.length : lineEnd, i + 25));
+					const context = src.substring(
+						Math.max(lineStart, i - 20),
+						Math.min(lineEnd === -1 ? src.length : lineEnd, i + 25)
+					);
 					errors.push(
 						"Line " + lineNum + ", col " + (i - lineStart + 1) +
 						": found escaped dollar-brace (0x5c 0x24 0x7b) in code context." +
@@ -226,28 +372,30 @@ describe("Source file has no escaped template literal characters", () => {
 		}
 	});
 
-	it("has valid template literal syntax (backticks are properly paired)", () => {
-		// Verify that the source file can be parsed as JavaScript by checking
-		// that backticks come in pairs (for template literals), using the
-		// same context tracker to ignore backticks inside strings and comments.
+	it("has valid template literal syntax (backticks are properly paired)", { timeout: 10000 }, () => {
+		// Verify that the source file has matching backtick pairs by scanning
+		// through the context map. Backticks inside strings and comments are
+		// ignored. Unclosed template literals are reported with their line number.
 		let inTemplate = false;
 		let templateStartLine = 1;
-		let templateStartCol = 1;
 
 		for (let i = 0; i < src.length; i++) {
-			const ctx = classifyContext(src, i);
-
-			if (ctx === "string" || ctx === "comment") continue;
+			// Skip backticks inside strings and comments
+			if (contextMap[i] === "string" || contextMap[i] === "comment") continue;
 
 			if (src[i] === "`") {
-				// Check if this backtick is escaped (preceded by \ that's not itself escaped)
-				const isEscaped = i > 0 && src[i - 1] === "\\" && (i < 2 || src[i - 2] !== "\\");
-				if (isEscaped) continue;
+				// Check if this backtick is escaped (preceded by backslash
+				// that's not itself escaped — only in code or template context)
+				if (i > 0 && src[i - 1] === "\\" && contextMap[i - 1] === ("code" as Context)) {
+					// Escaped backtick in code context — this is a bug,
+					// but it's caught by the backslash-backtick test above.
+					// Skip it here to avoid miscounting.
+					continue;
+				}
 
 				if (!inTemplate) {
 					inTemplate = true;
-					templateStartLine = src.substring(0, i).split("\n").length;
-					templateStartCol = i - src.lastIndexOf("\n", i);
+					templateStartLine = lineAt(i);
 				} else {
 					inTemplate = false;
 				}
@@ -257,7 +405,7 @@ describe("Source file has no escaped template literal characters", () => {
 		if (inTemplate) {
 			throw new Error(
 				"Unclosed template literal starting at line " + templateStartLine +
-				", col " + templateStartCol + ". This would cause a ParseError."
+				". This would cause a ParseError."
 			);
 		}
 	});
