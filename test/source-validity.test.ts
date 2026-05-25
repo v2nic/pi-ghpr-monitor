@@ -285,6 +285,23 @@ function buildContextMap(source: string): Context[] {
 
 const contextMap = buildContextMap(src);
 
+// Precompute line offsets for O(1) line-number lookup
+const lineOffsets = src.split("\n").reduce((acc: number[], line: string, idx: number) => {
+	acc.push(idx === 0 ? 0 : acc[idx - 1] + line.length + 1);
+	return acc;
+}, []);
+
+function lineAt(offset: number): number {
+	// Binary search for the line number at a given offset
+	let lo = 0, hi = lineOffsets.length - 1;
+	while (lo < hi) {
+		const mid = (lo + hi + 1) >> 1;
+		if (lineOffsets[mid] <= offset) lo = mid;
+		else hi = mid - 1;
+	}
+	return lo + 1; // 1-based line number
+}
+
 describe("Source file has no escaped template literal characters", () => {
 	it("contains no literal backslash-backtick in code context", () => {
 		// The byte sequence 0x5c 0x60 (backslash + backtick) outside of
@@ -300,7 +317,7 @@ describe("Source file has no escaped template literal characters", () => {
 		for (let i = 0; i < src.length - 1; i++) {
 			if (src.charCodeAt(i) === 0x5c && src.charCodeAt(i + 1) === 0x60) {
 				if (contextMap[i] === "code") {
-					const lineNum = src.substring(0, i).split("\n").length;
+					const lineNum = lineAt(i);
 					const lineStart = src.lastIndexOf("\n", i) + 1;
 					const lineEnd = src.indexOf("\n", i);
 					const context = src.substring(
@@ -334,7 +351,7 @@ describe("Source file has no escaped template literal characters", () => {
 		for (let i = 0; i < src.length - 2; i++) {
 			if (src.charCodeAt(i) === 0x5c && src.charCodeAt(i + 1) === 0x24 && src.charCodeAt(i + 2) === 0x7b) {
 				if (contextMap[i] === "code") {
-					const lineNum = src.substring(0, i).split("\n").length;
+					const lineNum = lineAt(i);
 					const lineStart = src.lastIndexOf("\n", i) + 1;
 					const lineEnd = src.indexOf("\n", i);
 					const context = src.substring(
@@ -355,7 +372,7 @@ describe("Source file has no escaped template literal characters", () => {
 		}
 	});
 
-	it("has valid template literal syntax (backticks are properly paired)", () => {
+	it("has valid template literal syntax (backticks are properly paired)", { timeout: 10000 }, () => {
 		// Verify that the source file has matching backtick pairs by scanning
 		// through the context map. Backticks inside strings and comments are
 		// ignored. Unclosed template literals are reported with their line number.
@@ -378,7 +395,7 @@ describe("Source file has no escaped template literal characters", () => {
 
 				if (!inTemplate) {
 					inTemplate = true;
-					templateStartLine = src.substring(0, i).split("\n").length;
+					templateStartLine = lineAt(i);
 				} else {
 					inTemplate = false;
 				}
