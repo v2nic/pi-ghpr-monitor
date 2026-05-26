@@ -553,7 +553,7 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 				if (mon.needsReminder && !agentTurnActive) {
 					const reminder = formatActionableItems(curr, config);
 					if (reminder && reminder !== mon.lastSentReminder) {
-						const detReminder = formatAgentNotification(curr, config); sendPRNotification(reminder, detReminder ?? reminder, {deliverAs: "steer"});
+						const detReminder = formatAgentNotification(curr, config); sendPRNotification(reminder, detReminder?.detailed ?? reminder, {deliverAs: "steer"});
 						mon.lastSentReminder = reminder;
 						mon.lastNudgeTime = Date.now();
 					}
@@ -566,7 +566,7 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 					const items = formatActionableItems(curr, config);
 					const detItems = formatAgentNotification(curr, config);
 					const msg = items ?? `\u2705 No issues found on ${prUrl}`;
-					const detMsg = detItems ?? `\u2705 No issues found on ${prUrl}`;
+					const detMsg = detItems?.detailed ?? `\u2705 No issues found on ${prUrl}`;
 					if (agentTurnActive) {
 						queuedForceCheck = msg;
 						queuedForceCheckDetailed = detMsg;
@@ -588,7 +588,7 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 					const nudge = formatActionableItems(curr, config);
 					const detNudge = formatAgentNotification(curr, config);
 					if (nudge) {
-						sendPRNotification(nudge, detNudge ?? nudge, {deliverAs: "steer"});
+						sendPRNotification(nudge, detNudge?.detailed ?? nudge, {deliverAs: "steer"});
 						mon.lastSentReminder = nudge;
 						mon.lastNudgeTime = Date.now();
 					}
