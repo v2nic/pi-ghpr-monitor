@@ -186,10 +186,8 @@ function buildContextMap(source: string): Context[] {
 					}
 					// Nested template literal inside ${}
 					if (tc === "`") {
-						// Recursively classify the entire nested template
-						// by building its context starting from this position
-						const innerStart = i;
-						// Mark the opening backtick as template
+						// Recursively classify nested template inside ${}
+						// All characters (including ${ and } delimiters) get context values.
 						contexts[i] = "template";
 						i++;
 						let innerDepth = 0;
@@ -198,11 +196,14 @@ function buildContextMap(source: string): Context[] {
 							const inext = i + 1 < len ? source[i + 1] : "";
 							if (ic === "$" && inext === "{" && innerDepth === 0) {
 								innerDepth++;
+								contexts[i] = "template"; // $
+								contexts[i + 1] = "template"; // {
 								i += 2;
 								continue;
 							}
 							if (ic === "}" && innerDepth > 0) {
 								innerDepth--;
+								contexts[i] = "template"; // }
 								i++;
 								continue;
 							}
@@ -446,12 +447,17 @@ describe("Source file has no escaped template literal characters", () => {
 			if (contextMap[i] === "string" || contextMap[i] === "comment") continue;
 
 			if (src[i] === "`") {
-				// Check if this backtick is escaped (preceded by backslash
-				// that's not itself escaped — only in code or template context)
-				if (i > 0 && src[i - 1] === "\\" && contextMap[i - 1] === ("code" as Context)) {
-					// Escaped backtick in code context — this is a bug,
-					// but it's caught by the backslash-backtick test above.
-					// Skip it here to avoid miscounting.
+				// Check if this backtick is escaped (preceded by backslash).
+				// Escaped backticks (\`) are valid inside template literals and
+				// single/double-quoted strings — they don't open or close templates.
+				// The context map already classifies the backslash, so check the
+				// position before it to determine if it's an escape sequence.
+				if (i > 0 && src[i - 1] === "\\" && contextMap[i - 1] !== "code") {
+					// The backtick is preceded by \ that is NOT in code context.
+					// In template/string context, \` is an escape sequence —
+					// the backtick is literal, not a delimiter. Skip it.
+					// (In code context, \` would be flagged by the
+					// backslash-backtick test as a bug, so we also skip it.)
 					continue;
 				}
 
