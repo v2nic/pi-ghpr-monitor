@@ -248,9 +248,9 @@ function sendPiCommand(tmuxSession: string, command: string): boolean {
 		return false;
 	}
 	// Clear any previous input in Pi's prompt before typing the new command.
-	// Ctrl+U clears the current line in readline (Pi uses Node.js readline).
-	// We send it, then type the new command.
-	execSync(`tmux send-keys -t ${tmuxSession} C-u`, { encoding: "utf-8", shell: "/bin/bash" });
+	// Escape dismisses any popup/overlay, then C-u clears the input line.
+	// This prevents tmux from concatenating the new command with stale input.
+	execSync(`tmux send-keys -t ${tmuxSession} Escape C-u`, { encoding: "utf-8", shell: "/bin/bash" });
 	execSync(`sleep 0.1`, { encoding: "utf-8", shell: "/bin/bash" });
 	tmuxType(tmuxSession, command);
 	tmuxSend(tmuxSession, "");
