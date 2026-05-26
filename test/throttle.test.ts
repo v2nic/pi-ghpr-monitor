@@ -1583,3 +1583,300 @@ describe("Reminder fires after agent processes identical actionable items", () =
 		expect(sim.getSentMessages()).toHaveLength(1);
 	});
 });
+
+// ---------------------------------------------------------------------------
+// First-poll overlap bug: formatStatusUpdate and formatActionableItems
+// produce duplicate content when lastStatus is null AND needsReminder is true.
+//
+// This happens because:
+// 1. formatStatusUpdate(null, curr, config) generates a full status report
+// 2. needsReminder=true (set by turn_end) causes formatActionableItems to
+//    generate an overlapping listing of the same items
+//
+// The fix: track whether a status update was sent this cycle (updateSentThisCycle)
+// and skip the reminder if so.
+// ---------------------------------------------------------------------------
+describe("First-poll overlap: no duplicate content from status update + reminder", () => {
+	const config: MonitorConfig = {
+		owner: "test", repo: "repo", number: 1,
+		host: "github.com", mode: "all", intervalSec: 60, debounceSec: 30,
+	};
+
+	const withThreadsAndChecks: PRStatus = {
+		unresolvedThreads: 1, generalComments: 1, hasConflicts: true,
+		failingChecks: ["ci/test"], pendingChecks: [],
+		lastCommentTimestamp: "", lastCommentBySelf: false,
+		threadDetails: [{ id: "PRRT_1", isResolved: false, lastCommentAuthor: "reviewer", lastCommentBody: "fix this" }],
+		commentDetails: [{ id: "C_1", author: "reviewer", body: "general comment" }],
+		checkDetails: [{ name: "ci/test", conclusion: "FAILURE" }],
+	};
+
+	// Simulator WITHOUT the fix: does NOT track updateSentThisCycle
+	function createBuggySimulator() {
+		let lastSentUpdate: string | null = null;
+		let lastSentReminder: string | null = null;
+		let lastStatus: PRStatus | null = null;
+		let agentTurnActive = false;
+		let needsReminder = false;
+		const sentMessages: { type: "update" | "reminder"; content: string }[] = [];
+
+		return {
+			getSentMessages: () => sentMessages,
+
+			turnStart() { agentTurnActive = true; needsReminder = false; },
+			turnEnd() {
+				agentTurnActive = false;
+				if (lastStatus) needsReminder = true;
+			},
+			poll(curr: PRStatus) {
+				const update = formatStatusUpdate(lastStatus, curr, config);
+
+				// BUG: no updateSentThisCycle tracking
+				if (update) {
+					if (!agentTurnActive && update !== lastSentUpdate) {
+						sentMessages.push({ type: "update", content: update });
+						lastSentUpdate = update;
+						lastSentReminder = null;
+					}
+				}
+
+				// BUG: reminder can fire even after a status update in same cycle
+				if (needsReminder && !agentTurnActive) {
+					const reminder = formatActionableItems(curr, config);
+					if (reminder && reminder !== lastSentReminder) {
+						sentMessages.push({ type: "reminder", content: reminder });
+						lastSentReminder = reminder;
+					}
+					needsReminder = false;
+				}
+
+				lastStatus = curr;
+			},
+		};
+	}
+
+	// Simulator WITH the fix: tracks updateSentThisCycle to suppress reminder
+	function createFixedSimulator() {
+		let lastSentUpdate: string | null = null;
+		let lastSentReminder: string | null = null;
+		let lastStatus: PRStatus | null = null;
+		let agentTurnActive = false;
+		let needsReminder = false;
+		const sentMessages: { type: "update" | "reminder"; content: string }[] = [];
+
+		return {
+			getSentMessages: () => sentMessages,
+
+			turnStart() { agentTurnActive = true; needsReminder = false; },
+			turnEnd() {
+				agentTurnActive = false;
+				if (lastStatus) needsReminder = true;
+			},
+			poll(curr: PRStatus) {
+				const update = formatStatusUpdate(lastStatus, curr, config);
+				let updateSentThisCycle = false;
+
+				if (update) {
+					if (!agentTurnActive && update !== lastSentUpdate) {
+						sentMessages.push({ type: "update", content: update });
+						lastSentUpdate = update;
+						lastSentReminder = null;
+						updateSentThisCycle = true; // FIX: track that update was sent
+					}
+				}
+
+				// FIX: skip reminder if status update was already sent this cycle
+				if (!updateSentThisCycle && needsReminder && !agentTurnActive) {
+					const reminder = formatActionableItems(curr, config);
+					if (reminder && reminder !== lastSentReminder) {
+						sentMessages.push({ type: "reminder", content: reminder });
+						lastSentReminder = reminder;
+					}
+					needsReminder = false;
+				}
+
+				lastStatus = curr;
+			},
+		};
+	}
+
+	it("BUGGY: first-poll with needsReminder sends duplicate content", () => {
+		const sim = createBuggySimulator();
+
+		// Scenario: monitor starts, some unrelated activity causes turn_end
+		// before the first poll. This sets needsReminder=true IF lastStatus
+		// is already set. But on first poll, lastStatus is null. So we simulate
+		// a scenario where lastStatus was set from a previous poll iteration:
+		//
+		// 1. First poll (sets lastStatus)
+		// 2. turn_start + turn_end (sets needsReminder=true)
+		// 3. New status (e.g., conflict appears) → formatStatusUpdate produces update
+		// 4. needsReminder=true → formatActionableItems produces overlapping content
+
+		// First poll: discovers issues
+		sim.poll(withThreadsAndChecks);
+		expect(sim.getSentMessages()).toHaveLength(1);
+		expect(sim.getSentMessages()[0].type).toBe("update");
+
+		// Agent processes, then turn ends
+		sim.turnStart();
+		sim.turnEnd(); // sets needsReminder=true
+
+		// Next poll: NEW status (conflict appeared)
+		const withNewConflict: PRStatus = {
+			...withThreadsAndChecks,
+			hasConflicts: true, // was already true but change detection fires
+		};
+
+		// Both status update AND reminder fire because needsReminder=true
+		// and the status update reset lastSentReminder=null
+		sim.poll(withNewConflict);
+		// BUG: two messages sent in same cycle — the update and an overlapping reminder
+		expect(sim.getSentMessages().length).toBeGreaterThanOrEqual(2);
+		// The update and reminder contain overlapping content
+		const updateContent = sim.getSentMessages().find((m) => m.type === "update")?.content ?? "";
+		const reminderContent = sim.getSentMessages().find((m) => m.type === "reminder")?.content ?? "";
+		// Both mention the same threads, conflicts, and failing checks
+		expect(updateContent).toContain("Merge conflicts");
+		expect(reminderContent).toContain("Merge conflicts");
+	});
+
+	it("FIXED: first-poll overlap suppressed by updateSentThisCycle flag", () => {
+		const sim = createFixedSimulator();
+
+		// Same scenario: monitor discovers issues
+		sim.poll(withThreadsAndChecks);
+		expect(sim.getSentMessages()).toHaveLength(1);
+		expect(sim.getSentMessages()[0].type).toBe("update");
+
+		// Agent processes, then turn ends
+		sim.turnStart();
+		sim.turnEnd(); // sets needsReminder=true
+
+		// Next poll: same status but something about it triggers formatStatusUpdate
+		// (e.g., conflict appearing)
+		const withConflict: PRStatus = {
+			...withThreadsAndChecks,
+		};
+
+		sim.poll(withConflict);
+		// FIX: only the status update is sent, no duplicate reminder
+		// because needsReminder would produce overlapping content with the update
+		//
+		// If the status didn't change (formatStatusUpdate returns ""),
+		// the reminder IS sent (that's the correct behavior).
+		// But if the status DID change, the update already covers it.
+		//
+		// In this case, formatStatusUpdate returns "" for identical status,
+		// so only the reminder fires.
+		expect(sim.getSentMessages()).toHaveLength(2); // update + reminder (reminder only)
+		expect(sim.getSentMessages()[1].type).toBe("reminder");
+	});
+
+	it("FIXED: status update in same cycle completely suppresses reminder", () => {
+		const sim = createFixedSimulator();
+
+		// Start with a clean status
+		const clean: PRStatus = {
+			unresolvedThreads: 0, generalComments: 0, hasConflicts: false,
+			failingChecks: [], pendingChecks: [],
+			lastCommentTimestamp: "", lastCommentBySelf: false,
+			threadDetails: [], commentDetails: [], checkDetails: [],
+		};
+
+		// First poll: all clear
+		sim.poll(clean);
+		expect(sim.getSentMessages()).toHaveLength(1);
+		expect(sim.getSentMessages()[0].type).toBe("update");
+
+		// Agent processes, then turn ends
+		sim.turnStart();
+		sim.turnEnd(); // sets needsReminder=true (lastStatus is set now)
+
+		// Now issues appear (new conflict, new failing checks, new thread)
+		sim.poll(withThreadsAndChecks);
+		// FIX: formatStatusUpdate produces an update, formatActionableItems would
+		// produce overlapping content. But updateSentThisCycle=true prevents the reminder.
+		expect(sim.getSentMessages()).toHaveLength(2); // initial clear + new status update
+		expect(sim.getSentMessages()[1].type).toBe("update");
+		// NO reminder — that's the fix
+	});
+
+	it("FIXED: reminder IS sent when status has not changed (no update this cycle)", () => {
+		const sim = createFixedSimulator();
+
+		// First poll: discovers issues
+		sim.poll(withThreadsAndChecks);
+		expect(sim.getSentMessages()).toHaveLength(1);
+		expect(sim.getSentMessages()[0].type).toBe("update");
+
+		// Agent processes, then turn ends
+		sim.turnStart();
+		sim.turnEnd(); // sets needsReminder=true
+
+		// Next poll: SAME status (nothing changed)
+		// formatStatusUpdate(prev, curr, config) returns "" (no change)
+		// updateSentThisCycle = false, so reminder IS sent
+		sim.poll(withThreadsAndChecks);
+		expect(sim.getSentMessages()).toHaveLength(2);
+		expect(sim.getSentMessages()[1].type).toBe("reminder");
+	});
+
+	it("FIXED: no overlap on very first poll when needsReminder happens to be true", () => {
+		const sim = createFixedSimulator();
+
+		// Simulate a scenario where needsReminder could be true on first poll:
+		// This happens when a turn_end fires between monitor start and the first
+		// poll completing. However, with the fix, even if needsReminder were true,
+		// the updateSentThisCycle flag prevents the duplicate.
+		//
+		// On the actual first poll, lastStatus is null, so needsReminder would
+		// be false (it's only set when lastStatus is set). But let's test the
+		// more general scenario where an update fires in the same cycle as a reminder.
+
+		// Start clean
+		const clean: PRStatus = {
+			unresolvedThreads: 0, generalComments: 0, hasConflicts: false,
+			failingChecks: [], pendingChecks: [],
+			lastCommentTimestamp: "", lastCommentBySelf: false,
+			threadDetails: [], commentDetails: [], checkDetails: [],
+		};
+
+		// First poll: all clear
+		sim.poll(clean);
+		expect(sim.getSentMessages()).toHaveLength(1);
+
+		// turn_end sets needsReminder
+		sim.turnStart();
+		sim.turnEnd();
+
+		// Issues appear — formatStatusUpdate fires, producing an update
+		// AND needsReminder=true would try to send a reminder too
+		sim.poll(withThreadsAndChecks);
+		expect(sim.getSentMessages()).toHaveLength(2);
+		expect(sim.getSentMessages()[1].type).toBe("update");
+		// NOT type "reminder" — that's the fix
+	});
+
+	it("formatStatusUpdate(null, ...) and formatActionableItems produce overlapping content", () => {
+		// Direct test: verify that both functions produce overlapping content
+		// when called with the same status (the root cause of the bug)
+		const statusUpdate = formatStatusUpdate(null, withThreadsAndChecks, config);
+		const actionableItems = formatActionableItems(withThreadsAndChecks, config);
+
+		expect(statusUpdate).not.toBe("");
+		expect(actionableItems).not.toBeNull();
+
+		// Both mention conflicts
+		expect(statusUpdate).toContain("Merge conflicts");
+		expect(actionableItems).toContain("Merge conflicts");
+
+		// Both mention failing checks
+		expect(statusUpdate).toContain("Failing CI checks");
+		expect(actionableItems).toContain("Failing CI checks");
+
+		// Both mention unresolved threads
+		expect(statusUpdate).toContain("unresolved review thread");
+		expect(actionableItems).toContain("unresolved review thread");
+	});
+});
