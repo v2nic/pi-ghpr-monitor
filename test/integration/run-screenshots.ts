@@ -247,6 +247,11 @@ function sendPiCommand(tmuxSession: string, command: string): boolean {
 		console.error(`  💥 Pi is not running, skipping command: ${command}`);
 		return false;
 	}
+	// Clear any previous input in Pi's prompt before typing the new command.
+	// Ctrl+C cancels the current input, then we type the new command.
+	execSync(`tmux send-keys -t ${tmuxSession} C-c`, { encoding: "utf-8", shell: "/bin/bash" });
+	// Small delay to let Pi process the cancel before typing
+	execSync(`sleep 0.2`, { encoding: "utf-8", shell: "/bin/bash" });
 	tmuxType(tmuxSession, command);
 	tmuxSend(tmuxSession, "");
 	return true;
