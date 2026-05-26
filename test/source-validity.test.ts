@@ -350,7 +350,7 @@ describe("Source file has no escaped template literal characters", () => {
 		const errors: string[] = [];
 
 		for (let i = 0; i < src.length - 2; i++) {
-			if (src.charCodeAt(i) === 0x5c && src.charCodeAt(i + 1) === 0x24 && src.charCodeAt(i + 2) === 0x7b) {
+			if (src.charCodeAt(i) === 0x5c && src.charCodeAt(i + 1] === 0x24 && src.charCodeAt(i + 2) === 0x7b) {
 				if (contextMap[i] === "code") {
 					const lineNum = lineAt(i);
 					const lineStart = src.lastIndexOf("\n", i) + 1;
