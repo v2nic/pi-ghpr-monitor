@@ -84,3 +84,4 @@ jobs:
                 summary: report,
               },
             });
+  workflow_dispatch:
