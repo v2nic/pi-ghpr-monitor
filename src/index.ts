@@ -571,8 +571,9 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 					mon.needsReminder = false;
 				}
 
-				// Force-check
-				if (mon.forceNotify && !agentTurnActive) {
+				// Force-check: always consume the flag so /ghpr-monitor check is never
+				// a no-op. When the agent is active, queue the result for flush on turn_end.
+				if (mon.forceNotify) {
 					const prUrl = `https://${config.host}/${config.owner}/${config.repo}/pull/${config.number}`;
 					const items = formatActionableItems(curr, config);
 					const detItems = formatAgentNotification(curr, config);

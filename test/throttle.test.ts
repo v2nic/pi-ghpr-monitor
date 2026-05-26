@@ -1111,6 +1111,7 @@ describe("Force check sends current state even when nothing changed", () => {
 		let agentTurnActive = false;
 		let needsReminder = false;
 		let forceNotify = false;
+		let queuedForceCheck: string | null = null;
 		let now = 1000000;
 		const sentMessages: { type: string; content: string }[] = [];
 
@@ -1121,7 +1122,12 @@ describe("Force check sends current state even when nothing changed", () => {
 			turnEnd() {
 				agentTurnActive = false;
 				needsReminder = true;
-				// FIX: do NOT clear lastSentReminder — preserves dedup guard
+				// Flush queued force-check result when turn ends
+				if (queuedForceCheck !== null) {
+					sentMessages.push({ type: "check", content: queuedForceCheck });
+					lastNudgeTime = now;
+					queuedForceCheck = null;
+				}
 			},
 			check() { forceNotify = true; },
 			poll(curr: PRStatus) {
@@ -1147,11 +1153,16 @@ describe("Force check sends current state even when nothing changed", () => {
 					needsReminder = false;
 				}
 
-				// FIX: force-check always sends current state
-				if (forceNotify && !agentTurnActive) {
+				// FIX: force-check always processes, even during active agent turn.
+				// When agent is active, queue for flush on turn_end.
+				if (forceNotify) {
 					const items = formatActionableItems(curr, config);
 					const msg = items ?? `✅ No issues found on https://github.com/${config.owner}/${config.repo}/pull/${config.number}`;
-					sentMessages.push({ type: "check", content: msg });
+					if (agentTurnActive) {
+						queuedForceCheck = msg;
+					} else {
+						sentMessages.push({ type: "check", content: msg });
+					}
 					lastSentReminder = items;
 					lastNudgeTime = now;
 					forceNotify = false;
@@ -1207,6 +1218,63 @@ describe("Force check sends current state even when nothing changed", () => {
 		expect(sim.getSentMessages()).toHaveLength(2);
 		expect(sim.getSentMessages()[1].type).toBe("check");
 		expect(sim.getSentMessages()[1].content).toContain("No issues");
+	});
+
+	it("queues force-check when agent turn is active, delivers on turn_end", () => {
+		// This is the core bug from #28: /ghpr-monitor check was a no-op
+		// when the agent was active because the forceNotify block was guarded
+		// by !agentTurnActive, so the flag was never consumed.
+		const sim = createCheckSim();
+
+		// First poll discovers comments (agent idle)
+		sim.poll(withComments);
+		expect(sim.getSentMessages()).toHaveLength(1);
+		expect(sim.getSentMessages()[0].type).toBe("update");
+
+		// Agent starts a turn
+		sim.turnStart();
+
+		// User triggers /ghpr-monitor check while agent is active
+		sim.check();
+
+		// Poll fires while agent is still active
+		sim.poll(withComments);
+		// The check should NOT be sent immediately -- it should be queued
+		expect(sim.getSentMessages()).toHaveLength(1); // still just the initial update
+
+		// Agent turn ends -- queued force-check should be flushed
+		sim.turnEnd();
+		expect(sim.getSentMessages()).toHaveLength(2);
+		expect(sim.getSentMessages()[1].type).toBe("check");
+		expect(sim.getSentMessages()[1].content).toContain("unresolved");
+
+		// forceNotify flag was consumed -- subsequent polls don't re-send
+		sim.poll(withComments);
+		expect(sim.getSentMessages()).toHaveLength(2); // no duplicate
+	});
+
+	it("force-check is consumed even when no turn follows the queue", () => {
+		// Edge case: check is queued during agent turn, another poll fires
+		// before turn_end. The queued result should not be duplicated.
+		const sim = createCheckSim();
+
+		sim.poll(withComments);
+		expect(sim.getSentMessages()).toHaveLength(1);
+
+		sim.turnStart();
+		sim.check();
+		sim.poll(withComments);
+		expect(sim.getSentMessages()).toHaveLength(1); // queued, not sent
+
+		// Another poll while still active -- forceNotify was already consumed,
+		// so no duplicate queue
+		sim.poll(withComments);
+		expect(sim.getSentMessages()).toHaveLength(1); // still just queued once
+
+		// Turn ends -- single queued check is flushed
+		sim.turnEnd();
+		expect(sim.getSentMessages()).toHaveLength(2);
+		expect(sim.getSentMessages()[1].type).toBe("check");
 	});
 });
 
