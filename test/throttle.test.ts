@@ -1111,7 +1111,7 @@ describe("Force check sends current state even when nothing changed", () => {
 		let agentTurnActive = false;
 		let needsReminder = false;
 		let forceNotify = false;
-		let queuedForceCheck: string | null = null;
+		let queuedForceChecks: string[] = [];
 		let now = 1000000;
 		const sentMessages: { type: string; content: string }[] = [];
 
@@ -1122,11 +1122,13 @@ describe("Force check sends current state even when nothing changed", () => {
 			turnEnd() {
 				agentTurnActive = false;
 				needsReminder = true;
-				// Flush queued force-check result when turn ends
-				if (queuedForceCheck !== null) {
-					sentMessages.push({ type: "check", content: queuedForceCheck });
+				// Flush queued force-check results when turn ends
+				if (queuedForceChecks.length > 0) {
+					for (const fc of queuedForceChecks) {
+						sentMessages.push({ type: "check", content: fc });
+					}
 					lastNudgeTime = now;
-					queuedForceCheck = null;
+					queuedForceChecks = [];
 				}
 			},
 			check() { forceNotify = true; },
@@ -1149,7 +1151,7 @@ describe("Force check sends current state even when nothing changed", () => {
 						sentMessages.push({ type: "reminder", content: reminder });
 						lastSentReminder = reminder;
 						lastNudgeTime = now;
-					}
+				}
 					needsReminder = false;
 				}
 
@@ -1159,7 +1161,7 @@ describe("Force check sends current state even when nothing changed", () => {
 					const items = formatActionableItems(curr, config);
 					const msg = items ?? `✅ No issues found on https://github.com/${config.owner}/${config.repo}/pull/${config.number}`;
 					if (agentTurnActive) {
-						queuedForceCheck = msg;
+						queuedForceChecks.push(msg);
 					} else {
 						sentMessages.push({ type: "check", content: msg });
 					}
@@ -1275,6 +1277,43 @@ describe("Force check sends current state even when nothing changed", () => {
 		sim.turnEnd();
 		expect(sim.getSentMessages()).toHaveLength(2);
 		expect(sim.getSentMessages()[1].type).toBe("check");
+	});
+
+	it("multiple polls queue multiple checks during agent turn, all flushed on turn_end", () => {
+		// When multiple monitors are force-checked during an active turn,
+		// each poll should accumulate into the queuedForceChecks array
+		// rather than overwriting. All results are flushed on turn_end.
+		const sim = createCheckSim();
+		const clean: PRStatus = {
+			unresolvedThreads: 0, generalComments: 0, hasConflicts: false,
+			failingChecks: [], pendingChecks: [],
+			lastCommentTimestamp: "", lastCommentBySelf: false,
+			threadDetails: [], commentDetails: [], checkDetails: [],
+		};
+
+		// Initial poll (agent idle)
+		sim.poll(withComments);
+		expect(sim.getSentMessages()).toHaveLength(1);
+
+		sim.turnStart();
+		// First force-check during active turn
+		sim.check();
+		sim.poll(withComments);
+		expect(sim.getSentMessages()).toHaveLength(1); // queued, not sent
+
+		// Simulate a second monitor getting force-checked: set flag and poll again
+		// (In production, multiple monitors poll independently during the same turn)
+		sim.check();
+		sim.poll(clean); // different status to distinguish the two checks
+		expect(sim.getSentMessages()).toHaveLength(1); // still queued
+
+		// Turn ends -- both queued checks should be flushed
+		sim.turnEnd();
+		expect(sim.getSentMessages()).toHaveLength(3); // initial update + 2 checks
+		expect(sim.getSentMessages()[1].type).toBe("check");
+		expect(sim.getSentMessages()[2].type).toBe("check");
+		expect(sim.getSentMessages()[1].content).toContain("unresolved"); // first check (withComments)
+		expect(sim.getSentMessages()[2].content).toContain("No issues"); // second check (clean)
 	});
 });
 
