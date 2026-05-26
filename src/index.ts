@@ -684,7 +684,7 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 		handler: async (args, ctx) => {
 			uiCtx = ctx.ui;
 			const raw = args.trim();
-			console.error(`[ghpr-monitor] DEBUG command handler received args: ${JSON.stringify(args)} raw: ${JSON.stringify(raw)}`);
+			const debugLog = require("fs").appendFileSync("/tmp/ghpr-monitor-debug.log", new Date().toISOString() + " command args=" + JSON.stringify(args) + " raw=" + JSON.stringify(raw) + "\n");
 
 			// Parse: off [PR identifier]
 			if (raw.toLowerCase().startsWith("off") || raw.toLowerCase().startsWith("stop")) {

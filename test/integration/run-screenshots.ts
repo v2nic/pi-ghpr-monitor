@@ -516,6 +516,13 @@ async function main() {
 
 	// Cleanup
 	console.log("\n🧹 Cleaning up...");
+	// Copy debug log if it exists
+	try {
+		const debugLogSrc = "/tmp/ghpr-monitor-debug.log";
+		if (fs.existsSync(debugLogSrc)) {
+			fs.copyFileSync(debugLogSrc, path.join(SCREENSHOT_DIR, "ghpr-monitor-debug.log"));
+		}
+	} catch {}
 	execSync(`tmux kill-session -t ${PI_SESSION} 2>/dev/null || true`);
 	ghServer.close();
 
