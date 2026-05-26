@@ -248,10 +248,10 @@ function sendPiCommand(tmuxSession: string, command: string): boolean {
 		return false;
 	}
 	// Clear any previous input in Pi's prompt before typing the new command.
-	// Ctrl+C cancels the current input, then we type the new command.
-	execSync(`tmux send-keys -t ${tmuxSession} C-c`, { encoding: "utf-8", shell: "/bin/bash" });
-	// Small delay to let Pi process the cancel before typing
-	execSync(`sleep 0.2`, { encoding: "utf-8", shell: "/bin/bash" });
+	// Ctrl+U clears the current line in readline (Pi uses Node.js readline).
+	// We send it, then type the new command.
+	execSync(`tmux send-keys -t ${tmuxSession} C-u`, { encoding: "utf-8", shell: "/bin/bash" });
+	execSync(`sleep 0.1`, { encoding: "utf-8", shell: "/bin/bash" });
 	tmuxType(tmuxSession, command);
 	tmuxSend(tmuxSession, "");
 	return true;
