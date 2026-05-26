@@ -462,37 +462,45 @@ async function main() {
 	captureScreenshot(PI_SESSION, "02-start-monitoring");
 	assertScreenshotContains("02-start-monitoring", "Monitoring");
 
-	// SCENARIO 3: Initial PR status
+	// SCENARIO 3: Initial PR status — wait for first poll to complete
 	console.log("\n📋 Scenario 3: Initial PR status");
-	if (!sendPiCommand(PI_SESSION, "/ghpr-monitor check")) {
-		console.error("  💥 Pi crashed before scenario 3");
-	} else {
-		await new Promise((r) => setTimeout(r, 3000));
+	const firstPoll = waitForText(PI_SESSION, "review thread", 15000);
+	if (!firstPoll) {
+		console.warn("  ⚠️  Did not see review thread notification, capturing anyway");
 	}
 	captureScreenshot(PI_SESSION, "03-initial-pr-status");
 
-	// SCENARIO 4: New review comment
+	// SCENARIO 4: New review comment — change mock state, wait for next poll
+	// Note: we rely on auto-polling (5s interval) instead of /ghpr-monitor check
+	// because tmux send-keys concatenates text with previous input, making
+	// / commands unreliable via tmux.
 	console.log("\n📋 Scenario 4: New review comment");
 	mockState.unresolvedThreads = 3;
 	mockState.generalComments = 2;
 	mockState.lastCommentBody = "This needs to be fixed before merging";
-	if (isPiAlive(PI_SESSION)) sendPiCommand(PI_SESSION, "/ghpr-monitor check");
-	await new Promise((r) => setTimeout(r, 3000));
+	if (!waitForText(PI_SESSION, "3 total", 10000)) {
+		console.warn("  ⚠️  Did not see '3 total' in notification");
+	}
+	await new Promise((r) => setTimeout(r, 2000));
 	captureScreenshot(PI_SESSION, "04-new-comment");
 
 	// SCENARIO 5: CI check fails
 	console.log("\n📋 Scenario 5: CI check fails");
 	mockState.failingChecks = ["ci/test"];
 	mockState.pendingChecks = [];
-	if (isPiAlive(PI_SESSION)) sendPiCommand(PI_SESSION, "/ghpr-monitor check");
-	await new Promise((r) => setTimeout(r, 3000));
+	if (!waitForText(PI_SESSION, "failing", 10000)) {
+		console.warn("  ⚠️  Did not see 'failing' in notification");
+	}
+	await new Promise((r) => setTimeout(r, 2000));
 	captureScreenshot(PI_SESSION, "05-ci-failing");
 
 	// SCENARIO 6: Merge conflicts
 	console.log("\n📋 Scenario 6: Merge conflicts detected");
 	mockState.hasConflicts = true;
-	if (isPiAlive(PI_SESSION)) sendPiCommand(PI_SESSION, "/ghpr-monitor check");
-	await new Promise((r) => setTimeout(r, 3000));
+	if (!waitForText(PI_SESSION, "conflict", 10000)) {
+		console.warn("  ⚠️  Did not see 'conflict' in notification");
+	}
+	await new Promise((r) => setTimeout(r, 2000));
 	captureScreenshot(PI_SESSION, "06-merge-conflicts");
 
 	// SCENARIO 7: All issues resolved
@@ -503,31 +511,43 @@ async function main() {
 	mockState.failingChecks = [];
 	mockState.pendingChecks = [];
 	mockState.passingChecks = ["ci/test", "ci/build"];
-	if (isPiAlive(PI_SESSION)) sendPiCommand(PI_SESSION, "/ghpr-monitor check");
-	await new Promise((r) => setTimeout(r, 3000));
+	if (!waitForText(PI_SESSION, "0 total", 10000)) {
+		console.warn("  ⚠️  Did not see '0 total' in notification");
+	}
+	await new Promise((r) => setTimeout(r, 2000));
 	captureScreenshot(PI_SESSION, "07-all-resolved");
 
 	// SCENARIO 8: Stop monitoring
+	// For stop/error commands, we type directly without sendPiCommand
+	// to avoid tmux input concatenation issues.
 	console.log("\n📋 Scenario 8: Stop monitoring");
-	if (isPiAlive(PI_SESSION)) sendPiCommand(PI_SESSION, "/ghpr-monitor off");
-	await new Promise((r) => setTimeout(r, 3000));
+	if (isPiAlive(PI_SESSION)) {
+		execSync(`tmux send-keys -t ${PI_SESSION} Escape C-u`, { encoding: "utf-8", shell: "/bin/bash" });
+		await new Promise((r) => setTimeout(r, 200));
+		tmuxType(PI_SESSION, "/ghpr-monitor off");
+		tmuxSend(PI_SESSION, "");
+	}
+	if (!waitForText(PI_SESSION, "Stopped", 10000)) {
+		if (!waitForText(PI_SESSION, "stopped", 10000)) {
+			console.warn("  ⚠️  Did not see 'Stopped/stopped' in notification");
+		}
+	}
+	await new Promise((r) => setTimeout(r, 2000));
 	captureScreenshot(PI_SESSION, "08-stop-monitoring");
 
-	// SCENARIO 9: Error handling
+	// SCENARIO 9: Error handling — start monitoring a non-existent PR
 	console.log("\n📋 Scenario 9: Error handling");
-	if (isPiAlive(PI_SESSION)) sendPiCommand(PI_SESSION, "/ghpr-monitor https://github.com/v2nic/gh-pr-review/pull/99999");
-	await new Promise((r) => setTimeout(r, 3000));
+	if (isPiAlive(PI_SESSION)) {
+		execSync(`tmux send-keys -t ${PI_SESSION} Escape C-u`, { encoding: "utf-8", shell: "/bin/bash" });
+		await new Promise((r) => setTimeout(r, 200));
+		tmuxType(PI_SESSION, "/ghpr-monitor https://github.com/v2nic/gh-pr-review/pull/99999");
+		tmuxSend(PI_SESSION, "");
+	}
+	await new Promise((r) => setTimeout(r, 5000));
 	captureScreenshot(PI_SESSION, "09-error-handling");
 
 	// Cleanup
 	console.log("\n🧹 Cleaning up...");
-	// Copy debug log if it exists
-	try {
-		const debugLogSrc = "/tmp/ghpr-monitor-debug.log";
-		if (fs.existsSync(debugLogSrc)) {
-			fs.copyFileSync(debugLogSrc, path.join(SCREENSHOT_DIR, "ghpr-monitor-debug.log"));
-		}
-	} catch {}
 	execSync(`tmux kill-session -t ${PI_SESSION} 2>/dev/null || true`);
 	ghServer.close();
 
