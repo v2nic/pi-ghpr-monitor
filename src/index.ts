@@ -318,14 +318,12 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 	 *    can see and act on. CustomMessage (pi.sendMessage) content is NOT injected
 	 *    into the LLM context, so sendUserMessage is required for agent delivery.
 	 *
-	 * 2. pi.sendMessage(customType: ghpr-monitor) — renders the concise summary in
-	 *    the TUI via the registered message renderer.
-	 *
-	 * To prevent the same notification from appearing twice in the TUI (once as a
-	 * UserMessage and once as a CustomMessage), the CustomMessage uses display:false
-	 * when a UserMessage is also being sent. The UserMessage is visible in the TUI
-	 * and the agent receives the detailed content. When no UserMessage is sent
-	 * (NO_AGENT mode), the CustomMessage uses display:true for TUI visibility.
+	 * 2. pi.sendMessage(customType: ghpr-monitor) — stores the CustomMessage in the
+	 *    session for event sourcing and rendering via the registered message renderer.
+	 *    When a UserMessage is also being sent (normal agent mode), display:false prevents
+	 *    a duplicate visible message — the UserMessage already appears in the TUI.
+	 *    In NO_AGENT mode (no UserMessage), display:true renders the CustomMessage in
+	 *    the TUI as the only visible notification.
 	 */
 	function sendPRNotification(concise: string, detailed: string, options?: { deliverAs?: "steer" | "followUp" }) {
 		const delivery = NO_AGENT ? undefined : (options?.deliverAs ?? "steer");

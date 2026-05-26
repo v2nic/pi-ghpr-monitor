@@ -239,34 +239,28 @@ describe("No rogue pi.sendUserMessage() calls bypass sendPRNotification", () => 
 	});
 });
 describe("Duplicate notification prevention via display flag", () => {
-	it("sendPRNotification sets display:true on CustomMessage when NO_AGENT (no UserMessage)", () => {
-		// When NO_AGENT is true, no UserMessage is sent, so the CustomMessage
-		// must be visible in the TUI (display: true).
-		// In NO_AGENT mode, delivery is undefined, and display: !undefined evaluates
-		// to display: true (truthy).
-		const delivery: string | undefined = undefined;
-		expect(!delivery).toBe(true); // Verify: !undefined === true, so display is truthy
-	});
-
-	it("sendPRNotification sets display:false on CustomMessage when delivery is set", () => {
-		// When delivery is set (normal agent mode), a UserMessage IS sent via
-		// pi.sendUserMessage(), and the CustomMessage should NOT be visible in the TUI
-		// to avoid a duplicate visible message.
-		// display: !delivery evaluates to display: !"steer" which is display: false.
-		const delivery: string | undefined = "steer";
-		expect(!delivery).toBe(false); // Verify: !("steer") === false, so display is falsy
-	});
-
-	it("all pi.sendMessage calls in sendPRNotification use display:!delivery", () => {
+	it("sendPRNotification uses display:!delivery on CustomMessage", () => {
 		const fnBody = extractFunctionBody(src, "sendPRNotification");
 		expect(fnBody).not.toBeNull();
 
 		// The CustomMessage should use display: !delivery so it's hidden when
 		// a UserMessage is also being sent (preventing visual duplicates).
 		expect(fnBody!).toContain("display: !delivery");
+	});
 
-		// Should NOT use hardcoded display: true (which caused the bug)
-		expect(fnBody!).not.toContain("display: true");
+	it("sendPRNotification does not use hardcoded display:true on CustomMessage", () => {
+		const fnBody = extractFunctionBody(src, "sendPRNotification");
+		expect(fnBody).not.toBeNull();
+
+		// Strip comments from the function body before checking for display: true
+		// to avoid false positives from docstrings that mention "display: true".
+		const codeOnly = fnBody!
+			.split("\n")
+			.filter((line: string) => !line.trim().startsWith("//") && !line.trim().startsWith("*"))
+			.join("\n");
+
+		// The code should NOT contain hardcoded display: true (which caused the bug)
+		expect(codeOnly).not.toContain("display: true");
 	});
 
 	it("non-notification pi.sendMessage calls use display:true (not conditional)", () => {
