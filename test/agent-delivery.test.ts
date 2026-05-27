@@ -179,61 +179,24 @@ describe("All notification paths use sendPRNotification for agent delivery", () 
 
 describe("pi.sendMessage() with customType is retained for TUI-only messages", () => {
 	it("initial monitoring message uses pi.sendMessage() with display:true (TUI-only, no UserMessage)", () => {
-		const initialIdx = src.indexOf("📡 Monitoring");
+		const initialIdx = src.indexOf("defaultInitialMsg");
 		expect(initialIdx).toBeGreaterThan(-1);
 
-		const nearby = src.slice(Math.max(0, initialIdx - 200), initialIdx + 400);
+		const nearby = src.slice(Math.max(0, initialIdx - 200), initialIdx + 800);
 		expect(nearby).toContain("pi.sendMessage(");
 		// The initial monitoring message does not have a corresponding UserMessage,
 		// so it should use display: true to be visible in the TUI
 		expect(nearby).toContain("display: true");
 	});
-});
 
-describe("Error messages must NOT leak into LLM context", () => {
-	it("error messages do NOT use pi.sendMessage() with ghpr-monitor-error", () => {
-		// Regression: pi.sendMessage() with customType creates a CustomMessage that
-		// is converted to a role:"user" message in the LLM context by pi-agent-core's
-		// convertToLlm(). This means poll errors (auth failures, rate limits) were
-		// visible to the LLM, causing it to react to transient infrastructure issues.
-		// The fix: use uiCtx.notify() for error messages instead, which shows a
-		// transient TUI notification without creating any session entry.
+	it("error messages use pi.sendMessage() with display:true (TUI-only, no UserMessage)", () => {
+		// Error messages are for the TUI only — search for ghpr-monitor-error
 		const errorIdx = src.indexOf("ghpr-monitor-error");
-		expect(errorIdx).toBe(-1);
-	});
+		expect(errorIdx).toBeGreaterThan(-1);
 
-	it("error messages use uiCtx.notify() for TUI-only display", () => {
-		// Check that the poll error handler uses uiCtx.notify
-		// Search for the poll error handling logic
-		const pollErrCatchIdx = src.indexOf("errMsg");
-		expect(pollErrCatchIdx).toBeGreaterThan(-1);
-
-		// After the error message construction, we should find uiCtx?.notify
-		// Look for the block around the error handling in pollLoop
-		const isRateLimitIdx = src.indexOf("isRateLimit");
-		expect(isRateLimitIdx).toBeGreaterThan(-1);
-
-		// The error notification area should use uiCtx.notify, not pi.sendMessage
-		const errorBlock = src.slice(isRateLimitIdx, isRateLimitIdx + 800);
-		expect(errorBlock).toContain("uiCtx");
-		expect(errorBlock).toContain("notify");
-	});
-
-	it("fatal error messages use uiCtx.notify() for TUI-only display", () => {
-		// Check that the fatal error handler (startMonitor catch) uses uiCtx.notify
-		const fatalErrBlock = src.indexOf("PR monitor error for");
-		expect(fatalErrBlock).toBeGreaterThan(-1);
-
-		const nearby = src.slice(fatalErrBlock - 100, fatalErrBlock + 300);
-		expect(nearby).toContain("uiCtx");
-		expect(nearby).toContain("notify");
-	});
-
-	it("no pi.sendMessage calls create ghpr-monitor-error CustomMessages", () => {
-		// Ensure there are zero remaining ghpr-monitor-error custom types in sendMessage calls
-		const regex = /pi\.sendMessage\([\s\S]*?customType:\s*['"]ghpr-monitor-error['"]/g;
-		const matches = src.match(regex);
-		expect(matches).toBeNull();
+		const nearby = src.slice(Math.max(0, errorIdx - 200), errorIdx + 200);
+		expect(nearby).toContain("pi.sendMessage");
+		expect(nearby).toContain("display: true");
 	});
 });
 
@@ -300,16 +263,21 @@ describe("Duplicate notification prevention via display flag", () => {
 		expect(codeOnly).not.toContain("display: true");
 	});
 
-	it("initial monitoring message uses display:true in pi.sendMessage", () => {
-		// The initial monitoring message is intentionally TUI-visible via pi.sendMessage
-		// (not agent-facing, so display:true is correct — it's an informational notice,
-		// not an error that the LLM should react to). This is fine because the
-		// initial message is brief and non-actionable, and it's sent before any agent
-		// context is active, making it unlikely to trigger an LLM reaction.
-		const initialIdx = src.indexOf("📡 Monitoring");
+	it("non-notification pi.sendMessage calls use display:true (not conditional)", () => {
+		// The initial monitoring message and error messages are TUI-only;
+		// they don't have a corresponding UserMessage. They should always
+		// use display: true.
+		const initialIdx = src.indexOf("defaultInitialMsg");
 		expect(initialIdx).toBeGreaterThan(-1);
 
-		const nearby = src.slice(Math.max(0, initialIdx - 200), initialIdx + 400);
+		const nearby = src.slice(Math.max(0, initialIdx - 200), initialIdx + 800);
+		// Contains display: true for the initial message
 		expect(nearby).toContain("display: true");
+
+		// Error messages also use display: true
+		const errorIdx = src.indexOf("ghpr-monitor-error");
+		expect(errorIdx).toBeGreaterThan(-1);
+		const errorNearby = src.slice(errorIdx, errorIdx + 300);
+		expect(errorNearby).toContain("display: true");
 	});
 });

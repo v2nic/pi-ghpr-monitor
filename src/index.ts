@@ -28,6 +28,18 @@ import {
 	formatAgentNotification,
 	formatAgentStatusUpdate,
 } from "./analyzer";
+import {
+	type Preferences,
+	PreferencesSchema,
+	validatePreferences,
+	loadPreferences,
+	savePreferences,
+	savePreferencesToPath,
+	loadPreferencesFromPath,
+	getPreferencesPath,
+	setPreferencesPath,
+	interpolateTemplate,
+} from "./preferences";
 import { setSessionId, enableDebug, disableDebug, isDebugEnabled, closeLogger, log, logPRSnapshot, logStatus, getLogPath } from "./logger";
 
 // ---------------------------------------------------------------------------
@@ -276,6 +288,10 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 	const MAX_IDLE_SEC = 3600; // 1 hour max idle polling
 	const NUDGE_COOLDOWN_MS = 3 * 60 * 1000; // 3 minutes between nudges for idle agent
 
+	// In-memory preferences, loaded on startup and refreshed when the tool is called
+	let currentPreferences: Preferences = loadPreferences();
+	log(`Loaded preferences: ${JSON.stringify(currentPreferences)}`);
+
 	// For testing: allows pointing at a mock server
 	let mockBaseUrl: string | undefined = process.env.GHPR_MOCK_BASE_URL;
 	const NO_AGENT = !!process.env.PI_GHPR_NO_AGENT;
@@ -283,7 +299,7 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 	// For testing: allows reducing the polling interval
 	const MOCK_INTERVAL_SECS = process.env.GHPR_MONITOR_INTERVAL_SECS ? parseInt(process.env.GHPR_MONITOR_INTERVAL_SECS, 10) : undefined;
 
-	const STEERING_PROMPT = `You have access to the ghpr-monitor tool. When the user asks you to watch or monitor a PR, use ghpr-monitor with action "start" to begin monitoring. The tool has actions: start, status, and check. Multiple PRs can be monitored simultaneously. You must NOT stop monitoring on your own — only the user can stop via /ghpr-monitor off (stops all) or /ghpr-monitor off <PR> (stops specific). The user can also run /ghpr-monitor check to trigger an immediate poll (all PRs or a specific one). You will receive PR status updates as notifications. The url parameter accepts GitHub PR URLs or shorthand like "owner/repo#123".`;
+	const STEERING_PROMPT = `You have access to the ghpr-monitor tool. When the user asks you to watch or monitor a PR, use ghpr-monitor with action "start" to begin monitoring. The tool has actions: start, status, check, and preferences. Multiple PRs can be monitored simultaneously. You must NOT stop monitoring on your own — only the user can stop via /ghpr-monitor off (stops all) or /ghpr-monitor off <PR> (stops specific). The user can also run /ghpr-monitor check to trigger an immediate poll (all PRs or a specific one). You will receive PR status updates as notifications. The url parameter accepts GitHub PR URLs or shorthand like "owner/repo#123". Use action='preferences' to view or customize the notification prompts. Calling with no value shows current preferences; providing a value in JSON writes new preferences.`;
 
 	// Register a custom message renderer for "ghpr-monitor" messages.
 	// This renders only the concise summary in the TUI, while the agent
@@ -517,7 +533,13 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 		const signal = controller.signal;
 
 		// Initial check
-		const initialMsg = `📡 Monitoring ${config.owner}/${config.repo}#${config.number}... (polling every ${config.intervalSec}s)`;
+		const defaultInitialMsg = `📡 Monitoring ${config.owner}/${config.repo}#${config.number}... (polling every ${config.intervalSec}s)`;
+		const initialMsg = currentPreferences.firstPoll
+			? `${interpolateTemplate(currentPreferences.firstPoll, {
+				owner: config.owner, repo: config.repo, number: config.number, host: config.host,
+				prLabel: `${config.owner}/${config.repo}#${config.number}`,
+			})} (polling every ${config.intervalSec}s)`
+			: defaultInitialMsg;
 		pi.sendMessage({
 			customType: "ghpr-monitor",
 			content: initialMsg,
@@ -546,7 +568,7 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 				}
 
 				const curr = snapshotPR(pr);
-				const update = formatStatusUpdate(mon.lastStatus, curr, config);
+				const update = formatStatusUpdate(mon.lastStatus, curr, config, currentPreferences);
 				const hadChange = update.length > 0;
 				let updateSentThisCycle = false;
 
@@ -556,7 +578,7 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 						queuedUpdate = update;
 					} else if (update !== lastSentUpdate) {
 						// Only send if something changed since last update
-						const { concise: concUpdate, detailed: detUpdate } = formatAgentStatusUpdate(mon.lastStatus, curr, config); sendPRNotification(concUpdate, detUpdate, {deliverAs: "steer"});
+						const { concise: concUpdate, detailed: detUpdate } = formatAgentStatusUpdate(mon.lastStatus, curr, config, currentPreferences); sendPRNotification(concUpdate, detUpdate, {deliverAs: "steer"});
 						lastSentUpdate = update;
 						mon.lastSentUpdate = update;
 						mon.lastSentReminder = null; // real update supersedes any prior reminder
@@ -569,9 +591,9 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 				// — but skip if a status update was already sent this cycle to avoid
 				//   duplicate content (e.g. first-poll overlap when lastStatus is null)
 				if (!updateSentThisCycle && mon.needsReminder && !agentTurnActive) {
-					const reminder = formatActionableItems(curr, config);
+					const reminder = formatActionableItems(curr, config, currentPreferences);
 					if (reminder && reminder !== mon.lastSentReminder) {
-						const detReminder = formatAgentNotification(curr, config); sendPRNotification(reminder, detReminder?.detailed ?? reminder, {deliverAs: "steer"});
+						const detReminder = formatAgentNotification(curr, config, currentPreferences); sendPRNotification(reminder, detReminder?.detailed ?? reminder, {deliverAs: "steer"});
 						mon.lastSentReminder = reminder;
 						mon.lastNudgeTime = Date.now();
 					}
@@ -581,8 +603,8 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 				// Force-check
 				if (mon.forceNotify && !agentTurnActive) {
 					const prUrl = `https://${config.host}/${config.owner}/${config.repo}/pull/${config.number}`;
-					const items = formatActionableItems(curr, config);
-					const detItems = formatAgentNotification(curr, config);
+					const items = formatActionableItems(curr, config, currentPreferences);
+					const detItems = formatAgentNotification(curr, config, currentPreferences);
 					const msg = items ?? `\u2705 No issues found on ${prUrl}`;
 					const detMsg = detItems?.detailed ?? `\u2705 No issues found on ${prUrl}`;
 					if (agentTurnActive) {
@@ -603,8 +625,8 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 					mon.lastNudgeTime > 0 &&
 					Date.now() - mon.lastNudgeTime >= NUDGE_COOLDOWN_MS
 				) {
-					const nudge = formatActionableItems(curr, config);
-					const detNudge = formatAgentNotification(curr, config);
+					const nudge = formatActionableItems(curr, config, currentPreferences);
+					const detNudge = formatAgentNotification(curr, config, currentPreferences);
 					if (nudge) {
 						sendPRNotification(nudge, detNudge?.detailed ?? nudge, {deliverAs: "steer"});
 						mon.lastSentReminder = nudge;
@@ -673,7 +695,7 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 				lines.push(`${header}\n  No status update received yet.`);
 			} else {
 				const ts = mon.lastStatusTimestamp ? mon.lastStatusTimestamp.toLocaleString() : "unknown";
-				const status = formatActionableItems(mon.lastStatus, c);
+				const status = formatActionableItems(mon.lastStatus, c, currentPreferences);
 				if (status) {
 					lines.push(`${header}\n  ${status.replace(/\n/g, "\n  ")}\n  Last checked: ${ts}`);
 				} else {
@@ -890,8 +912,8 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 	// -----------------------------------------------------------------------
 
 	const GhprMonitorParams = Type.Object({
-		action: StringEnum(["start", "status", "check"] as const, {
-			description: "Action: start monitoring, check current status, or trigger an immediate poll. Only the user can stop monitoring via /ghpr-monitor off.",
+		action: StringEnum(["start", "status", "check", "preferences"] as const, {
+			description: "Action: start monitoring, check current status, trigger an immediate poll, or view/update preferences",
 		}),
 		url: Type.Optional(Type.String({ description: "GitHub PR URL (e.g. https://github.com/owner/repo/pull/123) or shorthand (e.g. owner/repo#123). Alternative to owner+repo+pr_number." })),
 		owner: Type.Optional(Type.String({ description: "Repository owner (e.g. 'v2nic')" })),
@@ -903,13 +925,14 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 			}),
 		),
 		interval: Type.Optional(Type.Number({ description: "Polling interval in seconds (default: 60, minimum: 10)" })),
+		value: Type.Optional(Type.String({ description: "For preferences action: JSON string with preference overrides. Omit to read current preferences." })),
 	});
 
 	pi.registerTool({
 		name: "ghpr-monitor",
 		label: "GH PR Monitor",
 		description:
-			"Monitor GitHub pull requests for comments, conflicts, and CI status changes. Supports monitoring multiple PRs simultaneously. Use action='start' with a 'url' (GitHub PR URL) or with owner+repo+pr_number to begin monitoring. Use action='status' to list all currently monitored PRs. Use action='check' to trigger an immediate poll. The agent cannot stop monitoring — only the user can stop via /ghpr-monitor off.",
+			"Monitor GitHub pull requests for comments, conflicts, and CI status changes. Supports monitoring multiple PRs simultaneously. Use action='start' with a 'url' (GitHub PR URL) or with owner+repo+pr_number to begin monitoring. Use action='status' to list all currently monitored PRs. Use action='check' to trigger an immediate poll. Use action='preferences' to view or update notification prompt preferences. The agent cannot stop monitoring — only the user can stop via /ghpr-monitor off.",
 		promptSnippet: "Monitor GitHub PRs for changes (comments, conflicts, CI failures)",
 		promptGuidelines: [
 			"When the user asks you to watch or monitor a PR, use ghpr-monitor with action='start'.",
@@ -917,6 +940,9 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 			"Accept a GitHub PR URL, shorthand like 'owner/repo#123', or separate owner/repo/pr_number.",
 			"Use action='status' to see all currently monitored PRs.",
 			"Use action='check' to trigger an immediate poll.",
+			"Use action='preferences' to view current preferences or update them with a value parameter.",
+			"The value parameter for preferences is a JSON string with keys: newComments, conflict, ciFailure, reminder, allClear, firstPoll.",
+			"Template variables available in preferences: {owner}, {repo}, {number}, {host}, {prLabel}, plus situation-specific vars like {failingChecks}, {unresolvedThreads}, {generalComments}, {conflict}.",
 			"Do NOT stop monitoring on your own. Only the user can stop monitoring via /ghpr-monitor off.",
 			"Monitoring runs until the user stops it via /ghpr-monitor off, or the PR is merged/closed.",
 			"You will receive PR status updates as notifications.",
@@ -1086,6 +1112,41 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 					return {
 						content: [{ type: "text", text: `Checking all ${monitors.size} monitor(s)...` }],
 						details: { action: "check", status: "triggered_all", activeMonitors: monitors.size },
+					};
+				}
+
+				case "preferences": {
+					if (params.value !== undefined && params.value !== "") {
+						// Write preferences
+						const result = validatePreferences(params.value);
+						if (!result.ok) {
+							return {
+								content: [{ type: "text", text: `Invalid preferences: ${result.errors.join("; ")}` }],
+								details: { action: "preferences", status: "validation_error", errors: result.errors },
+							};
+						}
+						const newPrefs = result.preferences!;
+						savePreferencesToPath(newPrefs);
+						currentPreferences = newPrefs;
+						log(`Preferences updated: ${JSON.stringify(newPrefs)}`);
+						return {
+							content: [{ type: "text", text: `Preferences saved to ${getPreferencesPath()}:\n${JSON.stringify(newPrefs, null, 2)}` }],
+							details: { action: "preferences", status: "saved", preferences: newPrefs },
+						};
+					}
+
+					// Read preferences
+					const hasPrefs = Object.keys(currentPreferences).length > 0;
+					const prefsDisplay = hasPrefs
+						? JSON.stringify(currentPreferences, null, 2)
+						: "default (no custom preferences set)";
+					const availableKeys = Object.keys(PreferencesSchema.properties).join(", ");
+					const helpText = hasPrefs
+						? `Current preferences:\n${prefsDisplay}\n\nAvailable keys: ${availableKeys}\nTemplate variables: {owner}, {repo}, {number}, {host}, {prLabel}, {unresolvedThreads}, {generalComments}, {failingChecks}, {conflict}`
+						: `No custom preferences set. Using defaults.\n\nAvailable keys: ${availableKeys}\nTemplate variables: {owner}, {repo}, {number}, {host}, {prLabel}, {unresolvedThreads}, {generalComments}, {failingChecks}, {conflict}\n\nSet preferences with: ghpr-monitor(action='preferences', value='{"conflict": "⚠️ Conflict on {prLabel}!"}')`;
+					return {
+						content: [{ type: "text", text: helpText }],
+						details: { action: "preferences", status: "read", preferences: currentPreferences },
 					};
 				}
 
