@@ -34,10 +34,7 @@ import {
 	validatePreferences,
 	loadPreferences,
 	savePreferences,
-	savePreferencesToPath,
-	loadPreferencesFromPath,
 	getPreferencesPath,
-	setPreferencesPath,
 	interpolateTemplate,
 } from "./preferences";
 import { setSessionId, enableDebug, disableDebug, isDebugEnabled, closeLogger, log, logPRSnapshot, logStatus, getLogPath } from "./logger";
@@ -535,10 +532,11 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 		// Initial check
 		const defaultInitialMsg = `📡 Monitoring ${config.owner}/${config.repo}#${config.number}... (polling every ${config.intervalSec}s)`;
 		const initialMsg = currentPreferences.firstPoll
-			? `${interpolateTemplate(currentPreferences.firstPoll, {
+			? interpolateTemplate(currentPreferences.firstPoll, {
 				owner: config.owner, repo: config.repo, number: config.number, host: config.host,
 				prLabel: `${config.owner}/${config.repo}#${config.number}`,
-			})} (polling every ${config.intervalSec}s)`
+				intervalSec: config.intervalSec,
+			})
 			: defaultInitialMsg;
 		pi.sendMessage({
 			customType: "ghpr-monitor",
@@ -1126,7 +1124,7 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 							};
 						}
 						const newPrefs = result.preferences!;
-						savePreferencesToPath(newPrefs);
+						savePreferences(newPrefs);
 						currentPreferences = newPrefs;
 						log(`Preferences updated: ${JSON.stringify(newPrefs)}`);
 						return {

@@ -16,9 +16,9 @@
  *   newComments:  {unresolvedThreads}, {generalComments}
  *   conflict:     (none extra)
  *   ciFailure:    {failingChecks}
- *   reminder:     {unresolvedThreads}, {generalComments}, {failingChecks}
+ *   reminder:     {unresolvedThreads}, {generalComments}, {failingChecks}, {conflict}
  *   allClear:     (none extra)
- *   firstPoll:    (none extra)
+ *   firstPoll:    {intervalSec}
  */
 
 import { Type } from "@sinclair/typebox";
@@ -33,10 +33,6 @@ import { log } from "./logger";
 // TypeBox schema
 // ---------------------------------------------------------------------------
 
-/**
- * Keys that correspond to the notification situations where a preference
- * string can override the default message.
- */
 export const PreferencesSchema = Type.Object(
 	{
 		newComments: Type.Optional(
@@ -60,7 +56,7 @@ export const PreferencesSchema = Type.Object(
 		reminder: Type.Optional(
 			Type.String({
 				description:
-					"Prompt override for periodic reminders. Variables: {owner}, {repo}, {number}, {host}, {prLabel}, {unresolvedThreads}, {generalComments}, {failingChecks}",
+					"Prompt override for periodic reminders. Variables: {owner}, {repo}, {number}, {host}, {prLabel}, {unresolvedThreads}, {generalComments}, {failingChecks}, {conflict}",
 			}),
 		),
 		allClear: Type.Optional(
@@ -72,7 +68,7 @@ export const PreferencesSchema = Type.Object(
 		firstPoll: Type.Optional(
 			Type.String({
 				description:
-					"Prompt override for the initial status on first poll. Variables: {owner}, {repo}, {number}, {host}, {prLabel}",
+					"Prompt override for the initial status on first poll. Variables: {owner}, {repo}, {number}, {host}, {prLabel}, {intervalSec}",
 			}),
 		),
 	},
@@ -93,6 +89,25 @@ const ALLOWED_KEYS = new Set(Object.keys(PreferencesSchema.properties));
 const CONFIG_DIR = path.join(os.homedir(), ".config", "pi-ghpr-monitor");
 const PREFERENCES_FILE = path.join(CONFIG_DIR, "preferences.json");
 
+/**
+ * Override the preferences file path (for testing).
+ * When set, loadPreferences/savePreferences use this path instead
+ * of the default ~/.config/pi-ghpr-monitor/preferences.json.
+ */
+let preferencesPathOverride: string | undefined;
+
+/**
+ * Set a custom preferences file path. Used in tests to avoid writing
+ * to the real config directory.
+ */
+export function setPreferencesPath(overridePath: string | undefined): void {
+	preferencesPathOverride = overridePath;
+}
+
+function getEffectiveFilePath(): string {
+	return preferencesPathOverride ?? PREFERENCES_FILE;
+}
+
 // ---------------------------------------------------------------------------
 // Template interpolation
 // ---------------------------------------------------------------------------
@@ -108,9 +123,10 @@ export interface TemplateVars {
 	generalComments?: number;
 	failingChecks?: string;
 	conflict?: boolean;
+	intervalSec?: number;
 }
 
-const TEMPLATE_VAR_RE = /\{(owner|repo|number|host|prLabel|unresolvedThreads|generalComments|failingChecks|conflict)\}/g;
+const TEMPLATE_VAR_RE = /\{(owner|repo|number|host|prLabel|unresolvedThreads|generalComments|failingChecks|conflict|intervalSec)\}/g;
 
 /**
  * Replace template placeholders with actual values.
@@ -137,6 +153,8 @@ export function interpolateTemplate(template: string, vars: TemplateVars): strin
 				return vars.failingChecks ?? match;
 			case "conflict":
 				return vars.conflict !== undefined ? String(vars.conflict) : match;
+			case "intervalSec":
+				return vars.intervalSec !== undefined ? String(vars.intervalSec) : match;
 			default:
 				return match;
 		}
@@ -220,14 +238,16 @@ export function validatePreferences(jsonString: string): ValidationResult {
 /**
  * Load preferences from disk. Returns an empty object if the file does not
  * exist or cannot be read. Logs warnings on errors.
+ * Uses the override path if set via setPreferencesPath().
  */
 export function loadPreferences(): Preferences {
+	const filePath = getEffectiveFilePath();
 	try {
-		if (!fs.existsSync(PREFERENCES_FILE)) {
+		if (!fs.existsSync(filePath)) {
 			log("No preferences file found, using defaults");
 			return {};
 		}
-		const raw = fs.readFileSync(PREFERENCES_FILE, "utf-8");
+		const raw = fs.readFileSync(filePath, "utf-8");
 		const parsed: unknown = JSON.parse(raw);
 		if (!Value.Check(PreferencesSchema, parsed)) {
 			log("Preferences file is invalid, using defaults");
@@ -243,73 +263,24 @@ export function loadPreferences(): Preferences {
 /**
  * Save preferences to disk. Creates the config directory if it doesn't exist.
  * Writes atomically via a temp file and rename.
+ * Uses the override path if set via setPreferencesPath().
  */
 export function savePreferences(prefs: Preferences): void {
-	fs.mkdirSync(CONFIG_DIR, { recursive: true });
-	const tmpFile = PREFERENCES_FILE + ".tmp";
+	const filePath = getEffectiveFilePath();
+	const dir = path.dirname(filePath);
+	fs.mkdirSync(dir, { recursive: true });
+	const tmpFile = filePath + ".tmp";
 	fs.writeFileSync(tmpFile, JSON.stringify(prefs, null, 2) + "\n", "utf-8");
-	fs.renameSync(tmpFile, PREFERENCES_FILE);
-	log(`Preferences saved to ${PREFERENCES_FILE}`);
+	fs.renameSync(tmpFile, filePath);
+	log(`Preferences saved to ${filePath}`);
 }
 
 /**
  * Get the path to the preferences file (useful for tests and display).
+ * Returns the override path if set, otherwise the default path.
  */
 export function getPreferencesPath(): string {
-	return PREFERENCES_FILE;
-}
-
-/**
- * Override the preferences file path (for testing).
- */
-let preferencesPathOverride: string | undefined;
-
-/**
- * Set a custom preferences file path. Used in tests to avoid writing
- * to the real config directory.
- */
-export function setPreferencesPath(overridePath: string | undefined): void {
-	preferencesPathOverride = overridePath;
-}
-
-function getEffectivePath(): { dir: string; file: string } {
-	const filePath = preferencesPathOverride ?? PREFERENCES_FILE;
-	return { dir: path.dirname(filePath), file: filePath };
-}
-
-/**
- * Load preferences from the effective path (supports override for tests).
- */
-export function loadPreferencesFromPath(): Preferences {
-	const { dir, file } = getEffectivePath();
-	try {
-		if (!fs.existsSync(file)) {
-			log("No preferences file found, using defaults");
-			return {};
-		}
-		const raw = fs.readFileSync(file, "utf-8");
-		const parsed: unknown = JSON.parse(raw);
-		if (!Value.Check(PreferencesSchema, parsed)) {
-			log("Preferences file is invalid, using defaults");
-			return {};
-		}
-		return parsed as Preferences;
-	} catch (err) {
-		log(`Error loading preferences: ${(err as Error).message}`);
-		return {};
-	}
-}
-
-/**
- * Save preferences to the effective path (supports override for tests).
- */
-export function savePreferencesToPath(prefs: Preferences): void {
-	const { dir, file } = getEffectivePath();
-	fs.mkdirSync(dir, { recursive: true });
-	const tmpFile = file + ".tmp";
-	fs.writeFileSync(tmpFile, JSON.stringify(prefs, null, 2) + "\n", "utf-8");
-	fs.renameSync(tmpFile, file);
-	log(`Preferences saved to ${file}`);
+	return getEffectiveFilePath();
 }
 
 // ---------------------------------------------------------------------------

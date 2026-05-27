@@ -381,19 +381,27 @@ export function formatStatusUpdate(prev: PRStatus | null, curr: PRStatus, config
 		lines.push(msg);
 	}
 
+	// Track whether a newComments preference line was already emitted to avoid
+	// double-emission when both threads and comments are present.
+	let newCommentsPrefEmitted = false;
 
 	if (curr.unresolvedThreads > 0) {
 		const prevCount = prev?.unresolvedThreads ?? 0;
 		const threadLines = formatThreadDetails(curr.threadDetails ?? [], prev?.threadDetails);
 		const defaultThreadPrefix = curr.unresolvedThreads > prevCount
-			? `💬 ${curr.unresolvedThreads - prevCount} new unresolved review thread(s) on ${prLabel}:`
+			? `💬 ${curr.unresolvedThreads - prevCount} new unresolved review thread(s) on ${prLabel} (${curr.unresolvedThreads} total):`
 			: !prev
 				? `💬 ${curr.unresolvedThreads} unresolved review thread(s) on ${prLabel}:`
 				: null;
 		if (defaultThreadPrefix) {
-			if (prefs?.newComments) {
-				lines.push(interpolateTemplate(prefs.newComments, makeTemplateVars(config, { unresolvedThreads: curr.unresolvedThreads })));
-			} else {
+			if (prefs?.newComments && !newCommentsPrefEmitted) {
+				// Provide both thread and comment variables so the template can reference either
+				lines.push(interpolateTemplate(prefs.newComments, makeTemplateVars(config, {
+					unresolvedThreads: curr.unresolvedThreads,
+					generalComments: curr.generalComments,
+				})));
+				newCommentsPrefEmitted = true;
+			} else if (!prefs?.newComments) {
 				lines.push(defaultThreadPrefix);
 			}
 		}
@@ -413,9 +421,15 @@ export function formatStatusUpdate(prev: PRStatus | null, curr: PRStatus, config
 				? `💭 ${curr.generalComments} general comment(s) on ${prLabel}:`
 				: null;
 		if (defaultCommentPrefix) {
-			if (prefs?.newComments) {
-				lines.push(interpolateTemplate(prefs.newComments, makeTemplateVars(config, { generalComments: curr.generalComments })));
-			} else {
+			// If newComments preference was already emitted for threads, skip the comment line;
+			// otherwise emit the preference line now (with both variables available).
+			if (prefs?.newComments && !newCommentsPrefEmitted) {
+				lines.push(interpolateTemplate(prefs.newComments, makeTemplateVars(config, {
+					unresolvedThreads: curr.unresolvedThreads,
+					generalComments: curr.generalComments,
+				})));
+				newCommentsPrefEmitted = true;
+			} else if (!prefs?.newComments) {
 				lines.push(defaultCommentPrefix);
 			}
 		}
@@ -495,8 +509,9 @@ function formatCommentDetails(comments: CommentSummary[], prev?: CommentSummary[
  * Used to nudge the agent after it goes idle with unresolved items.
  *
  * If prefs.reminder is set, it replaces the entire concise summary.
- * Individual situation preferences (conflict, ciFailure, newComments) replace
- * specific lines within the reminder when prefs.reminder is NOT set.
+ * When prefs.newComments is set, it is emitted once with both
+ * {unresolvedThreads} and {generalComments} available, covering both
+ * threads and comments in a single line.
  */
 export function formatActionableItems(status: PRStatus, config: MonitorConfig, prefs?: Preferences): string | null {
 	const prLabel = `${config.owner}/${config.repo}#${config.number}`;
@@ -533,12 +548,19 @@ export function formatActionableItems(status: PRStatus, config: MonitorConfig, p
 		lines.push(msg);
 	}
 
+	// newComments preference: emit once with both variables, covering threads + comments
+	let newCommentsPrefEmitted = false;
+
 	if (status.unresolvedThreads > 0) {
-		const defaultMsg = `💬 ${status.unresolvedThreads} unresolved review thread(s) on ${prLabel}:`;
-		const msg = prefs?.newComments
-			? interpolateTemplate(prefs.newComments, makeTemplateVars(config, { unresolvedThreads: status.unresolvedThreads }))
-			: defaultMsg;
-		lines.push(msg);
+		if (prefs?.newComments && !newCommentsPrefEmitted) {
+			lines.push(interpolateTemplate(prefs.newComments, makeTemplateVars(config, {
+				unresolvedThreads: status.unresolvedThreads,
+				generalComments: status.generalComments,
+			})));
+			newCommentsPrefEmitted = true;
+		} else if (!prefs?.newComments) {
+			lines.push(`💬 ${status.unresolvedThreads} unresolved review thread(s) on ${prLabel}:`);
+		}
 		const threadLines = formatThreadDetails(status.threadDetails ?? []);
 		if (threadLines) {
 			lines.push(threadLines);
@@ -548,11 +570,15 @@ export function formatActionableItems(status: PRStatus, config: MonitorConfig, p
 	}
 
 	if (status.generalComments > 0) {
-		const defaultMsg = `💭 ${status.generalComments} general comment(s) on ${prLabel}:`;
-		const msg = prefs?.newComments
-			? interpolateTemplate(prefs.newComments, makeTemplateVars(config, { generalComments: status.generalComments }))
-			: defaultMsg;
-		lines.push(msg);
+		if (prefs?.newComments && !newCommentsPrefEmitted) {
+			lines.push(interpolateTemplate(prefs.newComments, makeTemplateVars(config, {
+				unresolvedThreads: status.unresolvedThreads,
+				generalComments: status.generalComments,
+			})));
+			newCommentsPrefEmitted = true;
+		} else if (!prefs?.newComments) {
+			lines.push(`💭 ${status.generalComments} general comment(s) on ${prLabel}:`);
+		}
 		const commentLines = formatCommentDetails(status.commentDetails ?? []);
 		if (commentLines) {
 			lines.push(commentLines);

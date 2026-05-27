@@ -14,8 +14,6 @@ import {
 	validatePreferences,
 	loadPreferences,
 	savePreferences,
-	savePreferencesToPath,
-	loadPreferencesFromPath,
 	getPreferencesPath,
 	setPreferencesPath,
 	interpolateTemplate,
@@ -33,12 +31,11 @@ let originalPath: string | undefined;
 
 beforeEach(() => {
 	tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "ghpr-prefs-test-"));
-	const prefsPath = path.join(tmpDir, "preferences.json");
-	setPreferencesPath(prefsPath);
+	setPreferencesPath(undefined); // Reset first
 });
 
 afterEach(() => {
-	// Clean up temp dir
+	// Clean up temp dir and reset preferences path
 	fs.rmSync(tmpDir, { recursive: true, force: true });
 	setPreferencesPath(undefined);
 });
@@ -226,25 +223,29 @@ describe("getPreferenceWithDefault", () => {
 
 describe("loadPreferences / savePreferences", () => {
 	it("returns empty object when file does not exist", () => {
-		const prefs = loadPreferencesFromPath();
+		const prefsPath = path.join(tmpDir, "test1.json");
+		setPreferencesPath(prefsPath);
+		const prefs = loadPreferences();
 		expect(prefs).toEqual({});
 	});
 
 	it("saves and loads preferences round-trip", () => {
+		const prefsPath = path.join(tmpDir, "test2.json");
+		setPreferencesPath(prefsPath);
 		const prefs: Preferences = {
 			conflict: "⚠️ Conflict on {prLabel}!",
 			ciFailure: "CI failing: {failingChecks}",
 		};
-		savePreferencesToPath(prefs);
+		savePreferences(prefs);
 
-		const loaded = loadPreferencesFromPath();
+		const loaded = loadPreferences();
 		expect(loaded).toEqual(prefs);
 	});
 
 	it("persists preferences to disk", () => {
-		const prefsPath = path.join(tmpDir, "preferences.json");
+		const prefsPath = path.join(tmpDir, "test3.json");
 		setPreferencesPath(prefsPath);
-		savePreferencesToPath({ allClear: "✨ {prLabel} all clear!" });
+		savePreferences({ allClear: "✨ {prLabel} all clear!" });
 
 		expect(fs.existsSync(prefsPath)).toBe(true);
 		const raw = JSON.parse(fs.readFileSync(prefsPath, "utf-8"));
@@ -252,28 +253,30 @@ describe("loadPreferences / savePreferences", () => {
 	});
 
 	it("ignores invalid preferences file on load", () => {
-		const prefsPath = path.join(tmpDir, "preferences.json");
+		const prefsPath = path.join(tmpDir, "test4.json");
 		setPreferencesPath(prefsPath);
 		fs.writeFileSync(prefsPath, "not json", "utf-8");
 
-		const prefs = loadPreferencesFromPath();
+		const prefs = loadPreferences();
 		expect(prefs).toEqual({});
 	});
 
 	it("ignores preferences with wrong schema on load", () => {
-		const prefsPath = path.join(tmpDir, "preferences.json");
+		const prefsPath = path.join(tmpDir, "test5.json");
 		setPreferencesPath(prefsPath);
 		fs.writeFileSync(prefsPath, JSON.stringify({ unknownKey: "value" }), "utf-8");
 
-		const prefs = loadPreferencesFromPath();
+		const prefs = loadPreferences();
 		expect(prefs).toEqual({});
 	});
 
 	it("replaces entire preferences file on save", () => {
-		savePreferencesToPath({ conflict: "first" });
-		savePreferencesToPath({ ciFailure: "second" });
+		const prefsPath = path.join(tmpDir, "test6.json");
+		setPreferencesPath(prefsPath);
+		savePreferences({ conflict: "first" });
+		savePreferences({ ciFailure: "second" });
 
-		const loaded = loadPreferencesFromPath();
+		const loaded = loadPreferences();
 		expect(loaded).toEqual({ ciFailure: "second" });
 		// conflict should NOT be present since save replaces the whole file
 		expect("conflict" in loaded).toBe(false);
