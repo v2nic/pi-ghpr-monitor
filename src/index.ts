@@ -952,7 +952,8 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 							"  ghpr-monitor(action='start', url='https://github.com/owner/repo/pull/123')",
 							"  ghpr-monitor(action='start', url='owner/repo#123')",
 							"  ghpr-monitor(action='start', owner='v2nic', repo='gh-pr-review', pr_number=42)",
-							"  ghpr-monitor(action='stop', url='owner/repo#123')",
+							"  ghpr-monitor(action='check') — trigger an immediate poll",
+							"  /ghpr-monitor off [PR] — stop monitoring (user only)",
 							"  ghpr-monitor(action='status') — list all monitored PRs",
 						].join("\n"),
 					};
