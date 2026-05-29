@@ -231,7 +231,7 @@ describe("Error messages must NOT leak into LLM context", () => {
 
 	it("no pi.sendMessage calls create ghpr-monitor-error CustomMessages", () => {
 		// Ensure there are zero remaining ghpr-monitor-error custom types in sendMessage calls
-		const regex = /pi\.sendMessage\([\s\S]*?customType:\s*['"]ghpr-monitor-error['"/]/g;
+		const regex = /pi\.sendMessage\([\s\S]*?customType:\s*['"]ghpr-monitor-error['"]/g;
 		const matches = src.match(regex);
 		expect(matches).toBeNull();
 	});
