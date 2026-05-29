@@ -314,9 +314,9 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 	 * Send a PR status notification with enriched content.
 	 *
 	 * Uses TWO delivery mechanisms to ensure both the agent and the TUI receive it:
-	 * 1. pi.sendUserMessage(detailed) — creates a UserMessage that the LLM agent
-	 *    can see and act on. CustomMessage (pi.sendMessage) content is NOT injected
-	 *    into the LLM context, so sendUserMessage is required for agent delivery.
+	 * 1. pi.sendUserMessage(detailed) — creates a UserMessage that is the primary
+	 *    delivery to the LLM agent. This ensures the coding agent can see and act
+	 *    on the notification.
 	 *
 	 * 2. pi.sendMessage(customType: ghpr-monitor) — stores the CustomMessage in the
 	 *    session for event sourcing and rendering via the registered message renderer.
@@ -324,14 +324,23 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 	 *    a duplicate visible message — the UserMessage already appears in the TUI.
 	 *    In NO_AGENT mode (no UserMessage), display:true renders the CustomMessage in
 	 *    the TUI as the only visible notification.
+	 *
+	 * NOTE: CustomMessages with display:true are also converted to role: "user"
+	 * messages in the LLM context by pi-agent-core's convertToLlm(). This means they
+	 * CAN be seen by the agent. However, pi.sendUserMessage() is still the preferred
+	 * delivery mechanism because it creates a proper UserMessage with content control.
+	 * Error messages intentionally avoid pi.sendMessage() entirely and use uiCtx.notify()
+	 * instead — transient TUI notifications that never enter the session or LLM context.
 	 */
 	function sendPRNotification(concise: string, detailed: string, options?: { deliverAs?: "steer" | "followUp" }) {
 		const delivery = NO_AGENT ? undefined : (options?.deliverAs ?? "steer");
 		// Deliver detailed content to the agent via UserMessage.
 		// pi.sendUserMessage() creates a UserMessage that is injected into the
 		// LLM conversation context, ensuring the coding agent can see and act on it.
-		// This is the ONLY reliable way to deliver content to the agent;
-		// pi.sendMessage() with customType only renders in the TUI.
+		// This is the preferred way to deliver content to the agent.
+		// pi.sendMessage() with customType also enters the LLM context via
+		// CustomMessage -> convertToLlm(), so error messages must NOT use it —
+		// they use uiCtx.notify() instead to stay TUI-only.
 		if (delivery) {
 			pi.sendUserMessage(detailed, { deliverAs: delivery });
 		}
@@ -426,11 +435,9 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 
 		pollLoop(mon).catch((err) => {
 			if (mon.controller.signal.aborted) return;
-			pi.sendMessage({
-				customType: "ghpr-monitor-error",
-				content: `PR monitor error for ${key}: ${err instanceof Error ? err.message : String(err)}`,
-				display: true,
-			});
+			const fatalErrMsg = `PR monitor error for ${key}: ${err instanceof Error ? err.message : String(err)}`;
+			log(fatalErrMsg);
+			uiCtx?.notify(fatalErrMsg, "error");
 			monitors.delete(key);
 			updateFooter();
 		});
@@ -621,13 +628,11 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 				mon.backoffSec = mon.backoffSec === 0
 					? config.intervalSec
 					: Math.min(mon.backoffSec * 2, MAX_BACKOFF_SEC);
-				pi.sendMessage({
-					customType: "ghpr-monitor-error",
-					content: isRateLimit
-						? `Rate limited on ${config.owner}/${config.repo}#${config.number}, backing off ${mon.backoffSec}s`
-						: `Poll error for ${config.owner}/${config.repo}#${config.number}: ${errMsg}${mon.backoffSec > config.intervalSec ? ` (retrying in ${mon.backoffSec}s)` : ""}`,
-					display: true,
-				});
+				const pollErrMsg = isRateLimit
+					? `Rate limited on ${config.owner}/${config.repo}#${config.number}, backing off ${mon.backoffSec}s`
+					: `Poll error for ${config.owner}/${config.repo}#${config.number}: ${errMsg}${mon.backoffSec > config.intervalSec ? ` (retrying in ${mon.backoffSec}s)` : ""}`;
+				log(pollErrMsg);
+				uiCtx?.notify(pollErrMsg, "warning");
 			}
 
 			// Wait for interval (abortable), with backoff after any error
