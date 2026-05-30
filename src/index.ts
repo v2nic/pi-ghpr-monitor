@@ -273,7 +273,7 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 	let lastSentUpdate: string | null = null;
 	let uiCtx: ExtensionUIContext | undefined;
 	const MAX_BACKOFF_SEC = 300; // 5 minutes max rate-limit backoff
-	const MAX_IDLE_SEC = 3600; // 1 hour max idle polling
+	const MAX_IDLE_SEC = 300; // 5 minutes max idle polling
 	const NUDGE_COOLDOWN_MS = 3 * 60 * 1000; // 3 minutes between nudges for idle agent
 
 	// For testing: allows pointing at a mock server
@@ -635,7 +635,7 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 			const idleSec = mon.consecutiveNoChange > 3
 				? Math.min(config.intervalSec * Math.pow(2, mon.consecutiveNoChange - 3), MAX_IDLE_SEC)
 				: baseSec;
-			const waitSec = agentTurnActive ? Math.max(idleSec, 300) : idleSec;
+			const waitSec = idleSec;
 			await new Promise<void>((resolve) => {
 				mon.pollWakeResolve = resolve;
 				const timer = setTimeout(() => {
