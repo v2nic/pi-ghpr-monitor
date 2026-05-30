@@ -179,10 +179,10 @@ describe("All notification paths use sendPRNotification for agent delivery", () 
 
 describe("pi.sendMessage() with customType is retained for TUI-only messages", () => {
 	it("initial monitoring message uses pi.sendMessage() with display:true (TUI-only, no UserMessage)", () => {
-		const initialIdx = src.indexOf("📡 Monitoring");
+		const initialIdx = src.indexOf("defaultInitialMsg");
 		expect(initialIdx).toBeGreaterThan(-1);
 
-		const nearby = src.slice(Math.max(0, initialIdx - 200), initialIdx + 400);
+		const nearby = src.slice(Math.max(0, initialIdx - 200), initialIdx + 800);
 		expect(nearby).toContain("pi.sendMessage(");
 		// The initial monitoring message does not have a corresponding UserMessage,
 		// so it should use display: true to be visible in the TUI
@@ -306,10 +306,10 @@ describe("Duplicate notification prevention via display flag", () => {
 		// not an error that the LLM should react to). This is fine because the
 		// initial message is brief and non-actionable, and it's sent before any agent
 		// context is active, making it unlikely to trigger an LLM reaction.
-		const initialIdx = src.indexOf("📡 Monitoring");
+		const initialIdx = src.indexOf("defaultInitialMsg");
 		expect(initialIdx).toBeGreaterThan(-1);
 
-		const nearby = src.slice(Math.max(0, initialIdx - 200), initialIdx + 400);
+		const nearby = src.slice(Math.max(0, initialIdx - 200), initialIdx + 800);
 		expect(nearby).toContain("display: true");
 	});
 });

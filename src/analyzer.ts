@@ -2,7 +2,13 @@
  * PR analysis functions — pure logic, testable without Pi runtime.
  *
  * Mirrors the condition detection logic from gh-pr-review's internal/await package.
+ *
+ * All formatting functions accept an optional Preferences object that can
+ * override the default prompt text for each notification situation.
  */
+
+import type { Preferences } from "./preferences";
+import { interpolateTemplate, type TemplateVars } from "./preferences";
 
 // ---------------------------------------------------------------------------
 // GitHub GraphQL response types
@@ -337,12 +343,28 @@ export function snapshotPR(pr: PullRequestData): PRStatus {
 	};
 }
 
-export function formatStatusUpdate(prev: PRStatus | null, curr: PRStatus, config: MonitorConfig): string {
+/** Build template variables from a MonitorConfig. */
+function makeTemplateVars(config: MonitorConfig, extra?: Partial<TemplateVars>): TemplateVars {
+	return {
+		owner: config.owner,
+		repo: config.repo,
+		number: config.number,
+		host: config.host,
+		prLabel: `${config.owner}/${config.repo}#${config.number}`,
+		...extra,
+	};
+}
+
+export function formatStatusUpdate(prev: PRStatus | null, curr: PRStatus, config: MonitorConfig, prefs?: Preferences): string {
 	const lines: string[] = [];
 	const prLabel = `${config.owner}/${config.repo}#${config.number}`;
 
 	if (curr.hasConflicts && (!prev || !prev.hasConflicts)) {
-		lines.push(`⚠️  Merge conflicts detected on ${prLabel}`);
+		const defaultMsg = `⚠️  Merge conflicts detected on ${prLabel}`;
+		const msg = prefs?.conflict
+			? interpolateTemplate(prefs.conflict, makeTemplateVars(config))
+			: defaultMsg;
+		lines.push(msg);
 	}
 
 	// Report failing checks only when they first appear or when the set changes
@@ -350,21 +372,38 @@ export function formatStatusUpdate(prev: PRStatus | null, curr: PRStatus, config
 	const newFailing = curr.failingChecks.filter(c => !prevFailing.includes(c));
 	if (curr.failingChecks.length > 0 && (!prev || newFailing.length > 0)) {
 		const details = formatCheckDetails([...(curr.checkDetails ?? []), ...(curr.statusDetails ?? [])]);
-		if (details) {
-			lines.push(`❌ Failing CI checks on ${prLabel}:${details}`);
-		} else {
-			lines.push(`❌ Failing CI checks on ${prLabel}: ${curr.failingChecks.join(", ")}`);
-		}
+		const defaultMsg = details
+			? `❌ Failing CI checks on ${prLabel}:${details}`
+			: `❌ Failing CI checks on ${prLabel}: ${curr.failingChecks.join(", ")}`;
+		const msg = prefs?.ciFailure
+			? interpolateTemplate(prefs.ciFailure, makeTemplateVars(config, { failingChecks: curr.failingChecks.join(", ") }))
+			: defaultMsg;
+		lines.push(msg);
 	}
 
+	// Track whether a newComments preference line was already emitted to avoid
+	// double-emission when both threads and comments are present.
+	let newCommentsPrefEmitted = false;
 
 	if (curr.unresolvedThreads > 0) {
 		const prevCount = prev?.unresolvedThreads ?? 0;
 		const threadLines = formatThreadDetails(curr.threadDetails ?? [], prev?.threadDetails);
-		if (curr.unresolvedThreads > prevCount) {
-			lines.push(`💬 ${curr.unresolvedThreads - prevCount} new unresolved review thread(s) on ${prLabel} (${curr.unresolvedThreads} total):`);
-		} else if (!prev) {
-			lines.push(`💬 ${curr.unresolvedThreads} unresolved review thread(s) on ${prLabel}:`);
+		const defaultThreadPrefix = curr.unresolvedThreads > prevCount
+			? `💬 ${curr.unresolvedThreads - prevCount} new unresolved review thread(s) on ${prLabel} (${curr.unresolvedThreads} total):`
+			: !prev
+				? `💬 ${curr.unresolvedThreads} unresolved review thread(s) on ${prLabel}:`
+				: null;
+		if (defaultThreadPrefix) {
+			if (prefs?.newComments && !newCommentsPrefEmitted) {
+				// Provide both thread and comment variables so the template can reference either
+				lines.push(interpolateTemplate(prefs.newComments, makeTemplateVars(config, {
+					unresolvedThreads: curr.unresolvedThreads,
+					generalComments: curr.generalComments,
+				})));
+				newCommentsPrefEmitted = true;
+			} else if (!prefs?.newComments) {
+				lines.push(defaultThreadPrefix);
+			}
 		}
 		if (threadLines) {
 			lines.push(threadLines);
@@ -376,10 +415,23 @@ export function formatStatusUpdate(prev: PRStatus | null, curr: PRStatus, config
 	if (curr.generalComments > 0) {
 		const prevCount = prev?.generalComments ?? 0;
 		const commentLines = formatCommentDetails(curr.commentDetails ?? [], prev?.commentDetails);
-		if (curr.generalComments > prevCount) {
-			lines.push(`💭 ${curr.generalComments - prevCount} new general comment(s) on ${prLabel}:`);
-		} else if (!prev) {
-			lines.push(`💭 ${curr.generalComments} general comment(s) on ${prLabel}:`);
+		const defaultCommentPrefix = curr.generalComments > prevCount
+			? `💭 ${curr.generalComments - prevCount} new general comment(s) on ${prLabel}:`
+			: !prev
+				? `💭 ${curr.generalComments} general comment(s) on ${prLabel}:`
+				: null;
+		if (defaultCommentPrefix) {
+			// If newComments preference was already emitted for threads, skip the comment line;
+			// otherwise emit the preference line now (with both variables available).
+			if (prefs?.newComments && !newCommentsPrefEmitted) {
+				lines.push(interpolateTemplate(prefs.newComments, makeTemplateVars(config, {
+					unresolvedThreads: curr.unresolvedThreads,
+					generalComments: curr.generalComments,
+				})));
+				newCommentsPrefEmitted = true;
+			} else if (!prefs?.newComments) {
+				lines.push(defaultCommentPrefix);
+			}
 		}
 		if (commentLines) {
 			lines.push(commentLines);
@@ -408,7 +460,11 @@ export function formatStatusUpdate(prev: PRStatus | null, curr: PRStatus, config
 		(curr.pendingStatuses ?? []).length === 0 &&
 		(!prev || prev.hasConflicts || prev.unresolvedThreads > 0 || prev.generalComments > 0 || prev.failingChecks.length > 0 || prev.pendingChecks.length > 0 || (prev.pendingStatuses ?? []).length > 0)
 	) {
-		lines.push(`✨ ${prLabel} — no issues, all clear`);
+		const defaultMsg = `✨ ${prLabel} — no issues, all clear`;
+		const msg = prefs?.allClear
+			? interpolateTemplate(prefs.allClear, makeTemplateVars(config))
+			: defaultMsg;
+		lines.push(msg);
 	}
 
 	return lines.join("\n");
@@ -451,26 +507,60 @@ function formatCommentDetails(comments: CommentSummary[], prev?: CommentSummary[
  * every actionable item. Returns null when nothing needs the agent's attention.
  *
  * Used to nudge the agent after it goes idle with unresolved items.
+ *
+ * If prefs.reminder is set, it replaces the entire concise summary.
+ * When prefs.newComments is set, it is emitted once with both
+ * {unresolvedThreads} and {generalComments} available, covering both
+ * threads and comments in a single line.
  */
-export function formatActionableItems(status: PRStatus, config: MonitorConfig): string | null {
-	const lines: string[] = [];
+export function formatActionableItems(status: PRStatus, config: MonitorConfig, prefs?: Preferences): string | null {
 	const prLabel = `${config.owner}/${config.repo}#${config.number}`;
 
+	// If the reminder preference is set, use it as the entire concise message
+	if (prefs?.reminder) {
+		const reminder = interpolateTemplate(prefs.reminder, makeTemplateVars(config, {
+			unresolvedThreads: status.unresolvedThreads,
+			generalComments: status.generalComments,
+			failingChecks: status.failingChecks.join(", "),
+			conflict: status.hasConflicts,
+		}));
+		return reminder;
+	}
+
+	const lines: string[] = [];
+
 	if (status.hasConflicts) {
-		lines.push(`⚠️  Merge conflicts detected on ${prLabel}`);
+		const defaultMsg = `⚠️  Merge conflicts detected on ${prLabel}`;
+		const msg = prefs?.conflict
+			? interpolateTemplate(prefs.conflict, makeTemplateVars(config))
+			: defaultMsg;
+		lines.push(msg);
 	}
 
 	if (status.failingChecks.length > 0) {
 		const details = formatCheckDetails([...(status.checkDetails ?? []), ...(status.statusDetails ?? [])]);
-		if (details) {
-			lines.push(`❌ Failing CI checks on ${prLabel}:${details}`);
-		} else {
-			lines.push(`❌ Failing CI checks on ${prLabel}: ${status.failingChecks.join(", ")}`);
-		}
+		const defaultMsg = details
+			? `❌ Failing CI checks on ${prLabel}:${details}`
+			: `❌ Failing CI checks on ${prLabel}: ${status.failingChecks.join(", ")}`;
+		const msg = prefs?.ciFailure
+			? interpolateTemplate(prefs.ciFailure, makeTemplateVars(config, { failingChecks: status.failingChecks.join(", ") }))
+			: defaultMsg;
+		lines.push(msg);
 	}
 
+	// newComments preference: emit once with both variables, covering threads + comments
+	let newCommentsPrefEmitted = false;
+
 	if (status.unresolvedThreads > 0) {
-		lines.push(`💬 ${status.unresolvedThreads} unresolved review thread(s) on ${prLabel}:`);
+		if (prefs?.newComments && !newCommentsPrefEmitted) {
+			lines.push(interpolateTemplate(prefs.newComments, makeTemplateVars(config, {
+				unresolvedThreads: status.unresolvedThreads,
+				generalComments: status.generalComments,
+			})));
+			newCommentsPrefEmitted = true;
+		} else if (!prefs?.newComments) {
+			lines.push(`💬 ${status.unresolvedThreads} unresolved review thread(s) on ${prLabel}:`);
+		}
 		const threadLines = formatThreadDetails(status.threadDetails ?? []);
 		if (threadLines) {
 			lines.push(threadLines);
@@ -480,7 +570,15 @@ export function formatActionableItems(status: PRStatus, config: MonitorConfig): 
 	}
 
 	if (status.generalComments > 0) {
-		lines.push(`💭 ${status.generalComments} general comment(s) on ${prLabel}:`);
+		if (prefs?.newComments && !newCommentsPrefEmitted) {
+			lines.push(interpolateTemplate(prefs.newComments, makeTemplateVars(config, {
+				unresolvedThreads: status.unresolvedThreads,
+				generalComments: status.generalComments,
+			})));
+			newCommentsPrefEmitted = true;
+		} else if (!prefs?.newComments) {
+			lines.push(`💭 ${status.generalComments} general comment(s) on ${prLabel}:`);
+		}
 		const commentLines = formatCommentDetails(status.commentDetails ?? []);
 		if (commentLines) {
 			lines.push(commentLines);
@@ -562,11 +660,10 @@ function formatCommentDetailBlock(comment: CommentSummary): string {
  *   - concise: the short TUI-friendly summary (same as formatActionableItems)
  *   - detailed: the full agent-facing content including structured details
  */
-export function formatAgentNotification(status: PRStatus, config: MonitorConfig): { concise: string; detailed: string } | null {
-	const concise = formatActionableItems(status, config);
+export function formatAgentNotification(status: PRStatus, config: MonitorConfig, prefs?: Preferences): { concise: string; detailed: string } | null {
+	const concise = formatActionableItems(status, config, prefs);
 	if (concise === null) return null;
 
-	const prLabel = `${config.owner}/${config.repo}#${config.number}`;
 	const detailLines: string[] = [];
 
 	// Thread detail blocks
@@ -604,8 +701,8 @@ export function formatAgentNotification(status: PRStatus, config: MonitorConfig)
  *   - concise: the short TUI-friendly summary (same as formatStatusUpdate)
  *   - detailed: the full agent-facing content including structured details
  */
-export function formatAgentStatusUpdate(prev: PRStatus | null, curr: PRStatus, config: MonitorConfig): { concise: string; detailed: string } {
-	const concise = formatStatusUpdate(prev, curr, config);
+export function formatAgentStatusUpdate(prev: PRStatus | null, curr: PRStatus, config: MonitorConfig, prefs?: Preferences): { concise: string; detailed: string } {
+	const concise = formatStatusUpdate(prev, curr, config, prefs);
 
 	// Only add detail blocks for new/changed items
 	const detailLines: string[] = [];
