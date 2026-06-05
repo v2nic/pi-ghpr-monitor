@@ -595,7 +595,7 @@ export function formatActionableItems(status: PRStatus, config: MonitorConfig, p
  *
  * Two patterns are linkified:
  * 1. `https://host/owner/repo/pull/number` → clickable link (display: URL)
- * 2. `owner/repo#number` → clickable link to `https://github.com/owner/repo/pull/number`
+ * 2. `owner/repo#number` → clickable link using defaultHost
  *
  * OSC 8 hyperlinks use the format:
  *   \x1b]8;;URL\x1b\\ display_text \x1b]8;;\x1b\\
@@ -603,8 +603,29 @@ export function formatActionableItems(status: PRStatus, config: MonitorConfig, p
  * The pi-tui Text component uses wrapTextWithAnsi which correctly
  * handles OSC 8 sequences, preserving them across line wraps and
  * excluding them from visible-width calculations.
+ *
+ * This function is idempotent: running it on already-linkified text
+ * produces the same result, because existing OSC 8 sequences are
+ * extracted before regex matching and reinserted unchanged.
+ *
+ * @param text - The text containing PR references and/or URLs
+ * @param defaultHost - The host to use for owner/repo#number shorthands.
+ *                      Defaults to "github.com". For GitHub Enterprise,
+ *                      pass the enterprise hostname (e.g. "github.corp.com").
  */
-export function linkifyPRRefs(text: string): string {
+export function linkifyPRRefs(text: string, defaultHost: string = "github.com"): string {
+	// Extract existing OSC 8 sequences to avoid double-linkification.
+	// Replace them with unique NUL-delimited placeholders, run the regex
+	// replacements on the clean text, then restore the originals.
+	const oscSequences: string[] = [];
+	// Match complete OSC 8 hyperlinks: \x1b]8;;URL\x1b\\DISPLAY\x1b]8;;\x1b\\
+	const oscPattern = /\x1b\]8;;[^\x1b]*\x1b\\[^\x1b]*\x1b\]8;;\x1b\\/g;
+	text = text.replace(oscPattern, (match) => {
+		const placeholder = `\x00OSC${oscSequences.length}\x00`;
+		oscSequences.push(match);
+		return placeholder;
+	});
+
 	// First pass: wrap existing full PR URLs in OSC 8 hyperlinks.
 	// Matches https://github.com/owner/repo/pull/123 (or any host)
 	const urlPattern = /https?:\/\/([^\/\s]+)\/([^\/\s]+)\/([^\/\s]+)\/pull\/([0-9]+)/g;
@@ -614,15 +635,17 @@ export function linkifyPRRefs(text: string): string {
 	});
 
 	// Second pass: replace owner/repo#number patterns with OSC 8 hyperlinks.
-	// These link to github.com (the default and most common host).
-	// After the URL pass, any owner/repo#number that was part of a URL
-	// is already inside an OSC 8 sequence and won't be matched because
-	// the regex requires alphanumeric owners/repos, which don't contain ESC.
+	// These link to defaultHost (default: github.com).
 	const refPattern = /([a-zA-Z0-9_.-]+)\/([a-zA-Z0-9_.-]+)#([0-9]+)/g;
 	text = text.replace(refPattern, (_match, owner: string, repo: string, number: string) => {
-		const url = `https://github.com/${owner}/${repo}/pull/${number}`;
+		const url = `https://${defaultHost}/${owner}/${repo}/pull/${number}`;
 		return `\x1b]8;;${url}\x1b\\${owner}/${repo}#${number}\x1b]8;;\x1b\\`;
 	});
+
+	// Restore OSC 8 sequences from placeholders
+	for (let i = oscSequences.length - 1; i >= 0; i--) {
+		text = text.replace(`\x00OSC${i}\x00`, oscSequences[i]!);
+	}
 
 	return text;
 }

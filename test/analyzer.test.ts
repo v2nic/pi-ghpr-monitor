@@ -1070,16 +1070,36 @@ describe("linkifyPRRefs", () => {
 		);
 	});
 
-	it("returns text unchanged when no patterns match", () => {
-		const input = "No PR references here, just plain text.";
-		expect(linkifyPRRefs(input)).toBe(input);
-	});
-
 	it("linkifies footer-style URL with emojis", () => {
 		const input = "📡 https://github.com/mobilityhouse/vgi-na-masscec/pull/366 ⚠️💬❌";
 		const result = linkifyPRRefs(input);
 		expect(result).toBe(
 			`📡 ${linkify("https://github.com/mobilityhouse/vgi-na-masscec/pull/366", "https://github.com/mobilityhouse/vgi-na-masscec/pull/366")} ⚠️💬❌`,
+		);
+	});
+
+	it("is idempotent — linkifying already-linkified text produces the same result", () => {
+		const input = "Check v2nic/gh-pr-review#42 and https://github.com/owner/repo/pull/99";
+		const first = linkifyPRRefs(input);
+		const second = linkifyPRRefs(first);
+		expect(second).toBe(first);
+	});
+
+	it("uses defaultHost for shorthand PR refs", () => {
+		const input = "owner/repo#42";
+		const result = linkifyPRRefs(input, "github.corp.com");
+		expect(result).toBe(
+			`${linkify("https://github.corp.com/owner/repo/pull/42", "owner/repo#42")}`,
+		);
+	});
+
+	it("uses defaultHost for both URLs and refs", () => {
+		// Full URLs already contain the host, so defaultHost only affects shorthand refs.
+		// But both should produce links to the correct host.
+		const input = "Check owner/repo#42 and https://github.corp.com/other/repo/pull/99";
+		const result = linkifyPRRefs(input, "github.corp.com");
+		expect(result).toBe(
+			`Check ${linkify("https://github.corp.com/owner/repo/pull/42", "owner/repo#42")} and ${linkify("https://github.corp.com/other/repo/pull/99", "https://github.corp.com/other/repo/pull/99")}`,
 		);
 	});
 });

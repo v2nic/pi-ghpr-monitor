@@ -63,10 +63,12 @@ describe("sendPRNotification always receives strings, not objects", () => {
 		const fnBody = extractFunctionBody(src, "sendPRNotification");
 		expect(fnBody).not.toBeNull();
 
-		// The sendPRNotification function should assign `detailed` (a string param)
-		// to the content field, never an object
-		// Check that content is set to the `detailed` parameter (which is typed as string)
-		expect(fnBody!).toContain("content: detailed");
+		// The sendPRNotification function should assign a string value
+		// to the content field, never an object. This can be either `detailed`
+		// directly or `linkifiedDetailed` (which is derived from `detailed`
+		// via linkifyPRRefs and is always a string).
+		const hasDetailed = fnBody!.includes("content: detailed") || fnBody!.includes("content: linkifiedDetailed");
+		expect(hasDetailed).toBe(true);
 	});
 
 	it("formatAgentNotification result is destructured before passing to sendPRNotification in reminder path", () => {
@@ -214,8 +216,10 @@ describe("sendPRNotification always receives strings, not objects", () => {
 		const fnBody = extractFunctionBody(src, "sendPRNotification");
 		expect(fnBody).not.toBeNull();
 
-		// The function should use `detailed` (typed as string) for the content field
+		// The function should use a string value for the content field
+		// (either `detailed` directly or `linkifiedDetailed` derived from it)
 		// This ensures the type system enforces string content at compile time
-		expect(fnBody!).toContain("content: detailed,");
+		const hasDetailed = fnBody!.includes("content: detailed,") || fnBody!.includes("content: linkifiedDetailed");
+		expect(hasDetailed).toBe(true);
 	});
 });
