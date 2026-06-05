@@ -590,6 +590,44 @@ export function formatActionableItems(status: PRStatus, config: MonitorConfig, p
 }
 
 /**
+ * Replace PR references (owner/repo#number) and full PR URLs with
+ * OSC 8 hyperlinks so they are clickable in the terminal.
+ *
+ * Two patterns are linkified:
+ * 1. `https://host/owner/repo/pull/number` → clickable link (display: URL)
+ * 2. `owner/repo#number` → clickable link to `https://github.com/owner/repo/pull/number`
+ *
+ * OSC 8 hyperlinks use the format:
+ *   \x1b]8;;URL\x1b\\ display_text \x1b]8;;\x1b\\
+ *
+ * The pi-tui Text component uses wrapTextWithAnsi which correctly
+ * handles OSC 8 sequences, preserving them across line wraps and
+ * excluding them from visible-width calculations.
+ */
+export function linkifyPRRefs(text: string): string {
+	// First pass: wrap existing full PR URLs in OSC 8 hyperlinks.
+	// Matches https://github.com/owner/repo/pull/123 (or any host)
+	const urlPattern = /https?:\/\/([^\/\s]+)\/([^\/\s]+)\/([^\/\s]+)\/pull\/([0-9]+)/g;
+	text = text.replace(urlPattern, (_match, host: string, owner: string, repo: string, number: string) => {
+		const url = `https://${host}/${owner}/${repo}/pull/${number}`;
+		return `\x1b]8;;${url}\x1b\\${url}\x1b]8;;\x1b\\`;
+	});
+
+	// Second pass: replace owner/repo#number patterns with OSC 8 hyperlinks.
+	// These link to github.com (the default and most common host).
+	// After the URL pass, any owner/repo#number that was part of a URL
+	// is already inside an OSC 8 sequence and won't be matched because
+	// the regex requires alphanumeric owners/repos, which don't contain ESC.
+	const refPattern = /([a-zA-Z0-9_.-]+)\/([a-zA-Z0-9_.-]+)#([0-9]+)/g;
+	text = text.replace(refPattern, (_match, owner: string, repo: string, number: string) => {
+		const url = `https://github.com/${owner}/${repo}/pull/${number}`;
+		return `\x1b]8;;${url}\x1b\\${owner}/${repo}#${number}\x1b]8;;\x1b\\`;
+	});
+
+	return text;
+}
+
+/**
  * Format a footer status line for the TUI status bar.
  * Shows the PR URL with emoji indicators for each issue type.
  * No emojis when no actionable items.

@@ -17,6 +17,7 @@ import {
 	formatActionableItems,
 	formatFooterStatus,
 	snapshotPR,
+	linkifyPRRefs,
 } from "../src/analyzer";
 import type { PullRequestData, PRStatus, MonitorConfig, CommitNode, ReactionNode } from "../src/analyzer";
 
@@ -977,5 +978,108 @@ describe("formatFooterStatus", () => {
 		const ghConfig = { ...config, host: "github.corp.com" };
 		const result = formatFooterStatus(ghConfig, null);
 		expect(result).toBe("📡 https://github.corp.com/mobilityhouse/vgi-na-masscec/pull/366");
+	});
+});
+
+describe("linkifyPRRefs", () => {
+	const OSC_OPEN = "\u001b]8;;";
+	const OSC_SEP = "\u001b\\";
+	const OSC_CLOSE = "\u001b]8;;\u001b\\";
+
+	function linkify(url: string, display: string): string {
+		return `${OSC_OPEN}${url}${OSC_SEP}${display}${OSC_CLOSE}`;
+	}
+
+	it("linkifies owner/repo#number patterns", () => {
+		const input = "✨ v2nic/gh-pr-review#42 — no issues, all clear";
+		const result = linkifyPRRefs(input);
+		expect(result).toBe(
+			`✨ ${linkify("https://github.com/v2nic/gh-pr-review/pull/42", "v2nic/gh-pr-review#42")} — no issues, all clear`,
+		);
+	});
+
+	it("linkifies multiple PR refs in one message", () => {
+		const input = "✅ All CI checks passed on mobilityhouse/vgi-na-masscec#538 ✨ mobilityhouse/vgi-na-masscec#538 — no issues, all clear";
+		const result = linkifyPRRefs(input);
+		expect(result).toBe(
+			`✅ All CI checks passed on ${linkify("https://github.com/mobilityhouse/vgi-na-masscec/pull/538", "mobilityhouse/vgi-na-masscec#538")} ✨ ${linkify("https://github.com/mobilityhouse/vgi-na-masscec/pull/538", "mobilityhouse/vgi-na-masscec#538")} — no issues, all clear`,
+		);
+	});
+
+	it("linkifies full PR URLs", () => {
+		const input = "📡 https://github.com/mobilityhouse/vgi-na-masscec/pull/366";
+		const result = linkifyPRRefs(input);
+		expect(result).toBe(
+			`📡 ${linkify("https://github.com/mobilityhouse/vgi-na-masscec/pull/366", "https://github.com/mobilityhouse/vgi-na-masscec/pull/366")}`,
+		);
+	});
+
+	it("linkifies PR URLs with non-github.com hosts", () => {
+		const input = "📡 https://github.corp.com/owner/repo/pull/42";
+		const result = linkifyPRRefs(input);
+		expect(result).toBe(
+			`📡 ${linkify("https://github.corp.com/owner/repo/pull/42", "https://github.corp.com/owner/repo/pull/42")}`,
+		);
+	});
+
+	it("linkifies PR URLs before PR refs, avoiding double-linkification", () => {
+		// If a message contains both a URL and a ref for the same PR,
+		// the URL should be linkified first, and the remaining ref independently.
+		const input = "Check https://github.com/v2nic/gh-pr-review/pull/42 and v2nic/gh-pr-review#42";
+		const result = linkifyPRRefs(input);
+		expect(result).toBe(
+			`Check ${linkify("https://github.com/v2nic/gh-pr-review/pull/42", "https://github.com/v2nic/gh-pr-review/pull/42")} and ${linkify("https://github.com/v2nic/gh-pr-review/pull/42", "v2nic/gh-pr-review#42")}`,
+		);
+	});
+
+	it("does not linkify text without PR refs", () => {
+		const input = "Just some regular text without any PR references.";
+		expect(linkifyPRRefs(input)).toBe(input);
+	});
+
+	it("handles PR refs with hyphens and dots in owner/repo names", () => {
+		const input = "my-org/my-repo.v2#123";
+		const result = linkifyPRRefs(input);
+		expect(result).toBe(
+			`${linkify("https://github.com/my-org/my-repo.v2/pull/123", "my-org/my-repo.v2#123")}`,
+		);
+	});
+
+	it("handles merge conflict notification", () => {
+		const input = "⚠️  Merge conflicts detected on owner/repo#42";
+		const result = linkifyPRRefs(input);
+		expect(result).toBe(
+			`⚠️  Merge conflicts detected on ${linkify("https://github.com/owner/repo/pull/42", "owner/repo#42")}`,
+		);
+	});
+
+	it("handles CI failure notification with PR ref", () => {
+		const input = "❌ Failing CI checks on owner/repo#42: ci/test, ci/build";
+		const result = linkifyPRRefs(input);
+		expect(result).toBe(
+			`❌ Failing CI checks on ${linkify("https://github.com/owner/repo/pull/42", "owner/repo#42")}: ci/test, ci/build`,
+		);
+	});
+
+	it("linkifies PR URLs with http scheme (normalizes to https)", () => {
+		const input = "📡 http://github.corp.com/owner/repo/pull/42";
+		const result = linkifyPRRefs(input);
+		// Both the href and display text use https (normalized from http)
+		expect(result).toBe(
+			`📡 ${linkify("https://github.corp.com/owner/repo/pull/42", "https://github.corp.com/owner/repo/pull/42")}`,
+		);
+	});
+
+	it("returns text unchanged when no patterns match", () => {
+		const input = "No PR references here, just plain text.";
+		expect(linkifyPRRefs(input)).toBe(input);
+	});
+
+	it("linkifies footer-style URL with emojis", () => {
+		const input = "📡 https://github.com/mobilityhouse/vgi-na-masscec/pull/366 ⚠️💬❌";
+		const result = linkifyPRRefs(input);
+		expect(result).toBe(
+			`📡 ${linkify("https://github.com/mobilityhouse/vgi-na-masscec/pull/366", "https://github.com/mobilityhouse/vgi-na-masscec/pull/366")} ⚠️💬❌`,
+		);
 	});
 });

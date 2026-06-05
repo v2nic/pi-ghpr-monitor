@@ -27,6 +27,7 @@ import {
 	formatFooterStatus,
 	formatAgentNotification,
 	formatAgentStatusUpdate,
+	linkifyPRRefs,
 } from "./analyzer";
 import {
 	type Preferences,
@@ -301,10 +302,18 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 	// This renders only the concise summary in the TUI, while the agent
 	// receives the full content (including complete comment bodies, paths,
 	// and line numbers) via the CustomMessage content field.
+	// PR references and URLs in the concise text are rendered as OSC 8
+	// hyperlinks so they are clickable in the terminal.
+	//
+	// pi-tui's Text component uses wrapTextWithAnsi() which correctly
+	// handles OSC 8 sequences: preserving them across line wraps and
+	// excluding them from visible-width calculations. Terminals that
+	// support OSC 8 will render the display text and open the URL on click.
 	pi.registerMessageRenderer<{ concise: string }>("ghpr-monitor", (message, _options, theme) => {
 		const concise = message.details?.concise ?? (typeof message.content === "string" ? message.content : "");
+		const linkifiedConcise = linkifyPRRefs(concise);
 		const box = new Box(1, 0, (t: string) => theme.bg("customMessageBg", t));
-		box.addChild(new Text(concise, 0, 0));
+		box.addChild(new Text(linkifiedConcise, 0, 0));
 		return box;
 	});
 
