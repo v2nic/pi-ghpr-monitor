@@ -27,6 +27,7 @@ import {
 	formatFooterStatus,
 	formatAgentNotification,
 	formatAgentStatusUpdate,
+	linkifyPRRefs,
 } from "./analyzer";
 import {
 	type Preferences,
@@ -276,8 +277,8 @@ function createActiveMonitor(config: MonitorConfig): ActiveMonitor {
 export default function ghprMonitorExtension(pi: ExtensionAPI) {
 	const monitors: Map<string, ActiveMonitor> = new Map();
 	let agentTurnActive = false;
-	let queuedUpdate: string | null = null;
-	let queuedForceChecks: Array<{ concise: string; detailed: string }> = [];
+	let queuedUpdate: { concise: string; detailed: string; host: string } | null = null;
+	let queuedForceChecks: Array<{ concise: string; detailed: string; host: string }> = [];
 	let lastSentUpdate: string | null = null;
 	let uiCtx: ExtensionUIContext | undefined;
 	const MAX_BACKOFF_SEC = 300; // 5 minutes max rate-limit backoff
@@ -301,6 +302,12 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 	// This renders only the concise summary in the TUI, while the agent
 	// receives the full content (including complete comment bodies, paths,
 	// and line numbers) via the CustomMessage content field.
+	//
+	// PR references and URLs in the concise text are already linkified
+	// with OSC 8 hyperlinks by sendPRNotification() before reaching here.
+	// pi-tui's Text component uses wrapTextWithAnsi() which correctly
+	// handles OSC 8 sequences: preserving them across line wraps and
+	// excluding them from visible-width calculations.
 	pi.registerMessageRenderer<{ concise: string }>("ghpr-monitor", (message, _options, theme) => {
 		const concise = message.details?.concise ?? (typeof message.content === "string" ? message.content : "");
 		const box = new Box(1, 0, (t: string) => theme.bg("customMessageBg", t));
@@ -344,8 +351,12 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 	 * Error messages intentionally avoid pi.sendMessage() entirely and use uiCtx.notify()
 	 * instead — transient TUI notifications that never enter the session or LLM context.
 	 */
-	function sendPRNotification(concise: string, detailed: string, options?: { deliverAs?: "steer" | "followUp" }) {
+	function sendPRNotification(concise: string, detailed: string, options?: { deliverAs?: "steer" | "followUp"; host?: string }) {
 		const delivery = NO_AGENT ? undefined : (options?.deliverAs ?? "steer");
+		const linkifyHost = options?.host ?? "github.com";
+		const linkifiedDetailed = linkifyPRRefs(detailed, linkifyHost);
+		const linkifiedConcise = linkifyPRRefs(concise, linkifyHost);
+
 		// Deliver detailed content to the agent via UserMessage.
 		// pi.sendUserMessage() creates a UserMessage that is injected into the
 		// LLM conversation context, ensuring the coding agent can see and act on it.
@@ -353,8 +364,13 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 		// pi.sendMessage() with customType also enters the LLM context via
 		// CustomMessage -> convertToLlm(), so error messages must NOT use it —
 		// they use uiCtx.notify() instead to stay TUI-only.
+		//
+		// Both the UserMessage (detailed) and the CustomMessage (concise) are
+		// linkified with OSC 8 hyperlinks so PR references are clickable in
+		// terminals that support the protocol. The LLM sees the linkified text
+		// but the OSC 8 escape sequences are non-printing and harmless.
 		if (delivery) {
-			pi.sendUserMessage(detailed, { deliverAs: delivery });
+			pi.sendUserMessage(linkifiedDetailed, { deliverAs: delivery });
 		}
 
 		// Emit a CustomMessage for the registered message renderer.
@@ -364,9 +380,9 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 		// so the CustomMessage is the visible notification.
 		pi.sendMessage({
 			customType: "ghpr-monitor",
-			content: detailed,
+			content: linkifiedDetailed,
 			display: !delivery,
-			details: { concise },
+			details: { concise: linkifiedConcise },
 		});
 	}
 
@@ -384,8 +400,8 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 		if (queuedUpdate !== null) {
 			const update = queuedUpdate;
 			queuedUpdate = null;
-			sendPRNotification(update, update, {deliverAs: "steer"});
-			lastSentUpdate = update;
+			sendPRNotification(update.concise, update.detailed, {deliverAs: "steer", host: update.host});
+			lastSentUpdate = update.concise;
 			// Mark all monitors that their reminders are superseded
 			for (const mon of monitors.values()) {
 				mon.lastSentReminder = null;
@@ -394,7 +410,7 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 		// Flush queued force-check results when turn ends
 		if (queuedForceChecks.length > 0) {
 			for (const fc of queuedForceChecks) {
-				sendPRNotification(fc.concise, fc.detailed, {deliverAs: "steer"});
+				sendPRNotification(fc.concise, fc.detailed, {deliverAs: "steer", host: fc.host});
 			}
 			queuedForceChecks = [];
 			for (const mon of monitors.values()) {
@@ -556,7 +572,7 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 					const prUrl = `https://${config.host}/${config.owner}/${config.repo}/pull/${config.number}`;
 					const reason = pr.merged ? "merged" : "closed";
 					const msg = `${pr.merged ? "🔀" : "❌"} PR ${prUrl} was ${reason}. Monitoring stopped.`;
-					sendPRNotification(msg, msg, {deliverAs: "steer"});
+					sendPRNotification(msg, msg, {deliverAs: "steer", host: config.host});
 					const key = prKey(config);
 					monitors.delete(key);
 					updateFooter();
@@ -571,10 +587,10 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 				if (update) {
 					if (agentTurnActive) {
 						// Don't spam the LLM while it's working - queue for later
-						queuedUpdate = update;
+						queuedUpdate = { concise: update, detailed: update, host: config.host };
 					} else if (update !== lastSentUpdate) {
 						// Only send if something changed since last update
-						const { concise: concUpdate, detailed: detUpdate } = formatAgentStatusUpdate(mon.lastStatus, curr, config, currentPreferences); sendPRNotification(concUpdate, detUpdate, {deliverAs: "steer"});
+						const { concise: concUpdate, detailed: detUpdate } = formatAgentStatusUpdate(mon.lastStatus, curr, config, currentPreferences); sendPRNotification(concUpdate, detUpdate, {deliverAs: "steer", host: config.host});
 						lastSentUpdate = update;
 						mon.lastSentUpdate = update;
 						mon.lastSentReminder = null; // real update supersedes any prior reminder
@@ -589,7 +605,7 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 				if (!updateSentThisCycle && mon.needsReminder && !agentTurnActive) {
 					const reminder = formatActionableItems(curr, config, currentPreferences);
 					if (reminder && reminder !== mon.lastSentReminder) {
-						const detReminder = formatAgentNotification(curr, config, currentPreferences); sendPRNotification(reminder, detReminder?.detailed ?? reminder, {deliverAs: "steer"});
+						const detReminder = formatAgentNotification(curr, config, currentPreferences); sendPRNotification(reminder, detReminder?.detailed ?? reminder, {deliverAs: "steer", host: config.host});
 						mon.lastSentReminder = reminder;
 						mon.lastNudgeTime = Date.now();
 					}
@@ -605,9 +621,9 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 					const msg = items ?? `\u2705 No issues found on ${prUrl}`;
 					const detMsg = detItems?.detailed ?? `\u2705 No issues found on ${prUrl}`;
 					if (agentTurnActive) {
-						queuedForceChecks.push({ concise: msg, detailed: detMsg });
+						queuedForceChecks.push({ concise: msg, detailed: detMsg, host: config.host });
 					} else {
-						sendPRNotification(msg, detMsg, {deliverAs: "steer"});
+						sendPRNotification(msg, detMsg, {deliverAs: "steer", host: config.host});
 					}
 					mon.lastSentReminder = items;
 					mon.lastNudgeTime = Date.now();
@@ -624,7 +640,7 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 					const nudge = formatActionableItems(curr, config, currentPreferences);
 					const detNudge = formatAgentNotification(curr, config, currentPreferences);
 					if (nudge) {
-						sendPRNotification(nudge, detNudge?.detailed ?? nudge, {deliverAs: "steer"});
+						sendPRNotification(nudge, detNudge?.detailed ?? nudge, {deliverAs: "steer", host: config.host});
 						mon.lastSentReminder = nudge;
 						mon.lastNudgeTime = Date.now();
 					}

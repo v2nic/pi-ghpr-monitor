@@ -96,7 +96,9 @@ describe("Agent notification delivery uses pi.sendUserMessage()", () => {
 		// The detailed content (full comment bodies, paths, line numbers)
 		// must be passed as the first argument to pi.sendUserMessage()
 		// so the agent gets full information without needing extra API calls.
-		expect(fnBody!).toMatch(/pi\.sendUserMessage\(\s*detailed/);
+		// After the linkifyPRRefs change, the argument is `linkifiedDetailed`
+		// which is derived from `detailed` and always a string.
+		expect(fnBody!).toMatch(/pi\.sendUserMessage\(\s*(linkified)?Detailed/);
 	});
 
 	it("sendPRNotification uses pi.sendMessage() with display:false when delivering to agent", () => {
