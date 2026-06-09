@@ -116,6 +116,31 @@ describe("validatePreferences", () => {
 		expect(result.ok).toBe(false);
 		expect(result.errors[0]).toContain("bogus");
 	});
+
+	it("rejects bare strings without template variables", () => {
+		const result = validatePreferences('{"ciFailure": "second"}');
+		expect(result.ok).toBe(false);
+		expect(result.errors[0]).toContain("without template variables");
+		expect(result.errors[0]).toContain("ciFailure");
+	});
+
+	it("rejects multiple bare strings without template variables", () => {
+		const result = validatePreferences('{"ciFailure": "oops", "conflict": "uh oh"}');
+		expect(result.ok).toBe(false);
+		expect(result.errors[0]).toContain("ciFailure");
+		expect(result.errors[0]).toContain("conflict");
+	});
+
+	it("accepts preference with template variables", () => {
+		const result = validatePreferences('{"ciFailure": "💥 CI failed on {prLabel}: {failingChecks}"}');
+		expect(result.ok).toBe(true);
+	});
+
+	it("empty string values are not treated as bare strings", () => {
+		const result = validatePreferences('{"conflict": ""}');
+		expect(result.ok).toBe(true);
+		expect(result.preferences!.conflict).toBe("");
+	});
 });
 
 // ---------------------------------------------------------------------------
@@ -273,13 +298,26 @@ describe("loadPreferences / savePreferences", () => {
 	it("replaces entire preferences file on save", () => {
 		const prefsPath = path.join(tmpDir, "test6.json");
 		setPreferencesPath(prefsPath);
-		savePreferences({ conflict: "first" });
-		savePreferences({ ciFailure: "second" });
+		savePreferences({ conflict: "first {prLabel}" });
+		savePreferences({ ciFailure: "CI down, see {prLabel}" });
 
 		const loaded = loadPreferences();
-		expect(loaded).toEqual({ ciFailure: "second" });
+		expect(loaded).toEqual({ ciFailure: "CI down, see {prLabel}" });
 		// conflict should NOT be present since save replaces the whole file
 		expect("conflict" in loaded).toBe(false);
+	});
+
+	it("strips bare-string preferences on load", () => {
+		const prefsPath = path.join(tmpDir, "test-bare.json");
+		setPreferencesPath(prefsPath);
+		// Simulate a corrupted preferences file with bare strings
+		const badPrefs = { ciFailure: "second", conflict: "Conflict on {prLabel}!" };
+		fs.writeFileSync(prefsPath, JSON.stringify(badPrefs), "utf-8");
+
+		const loaded = loadPreferences();
+		// ciFailure ("second") should be stripped, conflict (has template var) should remain
+		expect(loaded.ciFailure).toBeUndefined();
+		expect(loaded.conflict).toBe("Conflict on {prLabel}!");
 	});
 });
 

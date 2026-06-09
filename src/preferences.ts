@@ -128,6 +128,12 @@ export interface TemplateVars {
 
 const TEMPLATE_VAR_RE = /\{(owner|repo|number|host|prLabel|unresolvedThreads|generalComments|failingChecks|conflict|intervalSec)\}/g;
 
+/** Non-global version for .test() checks. The /g flag causes .test() to
+ *  advance lastIndex across successive calls, producing false negatives.
+ *  Use TEMPLATE_VAR_RE for .replace() (needs /g) and this for .test().
+ */
+const TEMPLATE_VAR_RE_NONGLOBAL = /\{(owner|repo|number|host|prLabel|unresolvedThreads|generalComments|failingChecks|conflict|intervalSec)\}/;
+
 /**
  * Replace template placeholders with actual values.
  * Unknown placeholders are left as-is.
@@ -174,6 +180,13 @@ export interface ValidationResult {
 /**
  * Validate a JSON string against the PreferencesSchema.
  * Returns a structured result with errors if invalid.
+ *
+ * In addition to structural validation, this checks that each preference
+ * value contains at least one template variable (e.g. {owner}, {prLabel}).
+ * Bare strings without template variables are rejected because they produce
+ * nonsensical notifications that get injected into the LLM context as user
+ * messages — the agent cannot distinguish a literal "second" from a real
+ * user prompt.
  */
 export function validatePreferences(jsonString: string): ValidationResult {
 	let parsed: unknown;
@@ -224,6 +237,29 @@ export function validatePreferences(jsonString: string): ValidationResult {
 		return { ok: false, errors };
 	}
 
+	// Check that each preference value contains at least one template variable.
+	// Bare strings without template variables are dangerous because they get
+	// injected into the LLM context as user messages, and the agent cannot
+	// distinguish them from real user input.
+	const templatelessKeys: string[] = [];
+	const prefs = parsed as Preferences;
+	for (const [key, value] of Object.entries(prefs)) {
+		if (value !== undefined && value !== "" && !TEMPLATE_VAR_RE_NONGLOBAL.test(value)) {
+			templatelessKeys.push(key);
+		}
+	}
+	if (templatelessKeys.length > 0) {
+		return {
+			ok: false,
+			errors: [
+				`Preference${templatelessKeys.length > 1 ? "s" : ""} without template variables: ${templatelessKeys.join(", ")}. ` +
+				`Each preference must contain at least one template variable (e.g. {owner}, {repo}, {prLabel}) ` +
+				`so the notification includes PR context. Bare strings get injected into the LLM as user messages ` +
+				`and can be mistaken for real user input.`,
+			],
+		};
+	}
+
 	return {
 		ok: true,
 		errors: [],
@@ -253,7 +289,28 @@ export function loadPreferences(): Preferences {
 			log("Preferences file is invalid, using defaults");
 			return {};
 		}
-		return parsed as Preferences;
+
+		// Check for bare-string preferences without template variables.
+		// These are dangerous because they get injected into the LLM context
+		// as user messages without any PR context.
+		const prefs = parsed as Preferences;
+		const templatelessKeys: string[] = [];
+		for (const [key, value] of Object.entries(prefs)) {
+			if (value !== undefined && value !== "" && !TEMPLATE_VAR_RE_NONGLOBAL.test(value)) {
+				templatelessKeys.push(key);
+			}
+		}
+		if (templatelessKeys.length > 0) {
+			log(`WARNING: Preferences without template variables found: ${templatelessKeys.join(", ")}. ` +
+				`These produce nonsensical notifications. Ignoring them. ` +
+			`Update ~/.config/pi-ghpr-monitor/preferences.json to include template variables like {owner}, {repo}, {prLabel}.`);
+			// Remove the templateless entries so they don't produce garbage notifications
+			for (const key of templatelessKeys) {
+				delete (prefs as Record<string, unknown>)[key];
+			}
+		}
+
+		return prefs;
 	} catch (err) {
 		log(`Error loading preferences: ${(err as Error).message}`);
 		return {};
