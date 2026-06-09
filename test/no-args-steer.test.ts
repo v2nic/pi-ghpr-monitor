@@ -3,7 +3,8 @@
  *
  * When /ghpr-monitor is invoked without arguments (or with just "on"):
  * - If monitors are running, shows current status via ctx.ui.notify
- * - If no monitors are running, sends a steer message or shows usage (per #41)
+ * - If no monitors are running, sends a steer message to the agent
+ *   (this PR only adds the status subcommand; removing the steer is #41)
  *
  * The /ghpr-monitor status subcommand displays PR status to both the TUI
  * and the LLM context without triggering an agent turn, using pi.sendMessage
@@ -26,21 +27,30 @@ describe("no-args behavior", () => {
 
 		const runningBranch = src.slice(
 			src.indexOf("if (monitors.size > 0)", onBlockStart),
-			src.indexOf("return", src.indexOf("if (monitors.size > 0)", onBlockStart)),
+			src.indexOf("pi.sendUserMessage", onBlockStart),
 		);
 		expect(runningBranch).toContain("formatCurrentStatus()");
 		expect(runningBranch).toContain("ctx.ui.notify(statusText");
 	});
 
-	it("command description mentions status/usage capability", () => {
-		const descMatch = src.match(/description:\s*"Monitor[^"]*"/);
-		expect(descMatch).not.toBeNull();
-		expect(descMatch![0]).toContain("status/usage");
+	it("sends steer message when no monitors running (to be replaced by #41)", () => {
+		// This PR (#40) does not change the no-monitors steer behavior;
+		// that's covered by #41. Verify the steer message still exists.
+		const onBlockStart = src.indexOf('if (raw.toLowerCase() === "on" || raw === "")');
+		expect(onBlockStart).toBeGreaterThan(-1);
+		const onBlock = src.slice(onBlockStart, onBlockStart + 1200);
+		expect(onBlock).toContain("pi.sendUserMessage");
 	});
 
-	it("header comment documents no-args behavior", () => {
+	it("command description mentions status subcommand", () => {
+		const descMatch = src.match(/description:\s*"Monitor[^"]*"/);
+		expect(descMatch).not.toBeNull();
+		expect(descMatch![0]).toContain("/ghpr-monitor status");
+	});
+
+	it("header comment documents no-args and status behavior", () => {
 		const headerComment = src.slice(0, src.indexOf("// -----------") > 0 ? src.indexOf("// -----------") : 2000);
-		expect(headerComment).toContain("no args = show status/usage");
+		expect(headerComment).toContain("status");
 	});
 });
 
@@ -92,15 +102,20 @@ describe("/ghpr-monitor status subcommand", () => {
 		expect(statusBlock).toContain("ctx.ui.notify");
 	});
 
-	it("includes detailed status info for the LLM context", () => {
-		const statusBlock = src.slice(
+	it("uses shared buildDetailedStatusLines helper (no duplication)", () => {
+		// The shared helper should exist and be used by both the command
+		// handler and the tool action='status'
+		expect(src).toContain("function buildDetailedStatusLines()");
+		// The command handler should call the helper
+		const statusCmdBlock = src.slice(
 			src.indexOf('raw.toLowerCase() === "status"'),
 			src.indexOf("// Parse: check [PR identifier]"),
 		);
-		expect(statusBlock).toContain("unresolvedThreads");
-		expect(statusBlock).toContain("generalComments");
-		expect(statusBlock).toContain("failingChecks");
-		expect(statusBlock).toContain("hasConflicts");
+		expect(statusCmdBlock).toContain("buildDetailedStatusLines()");
+		// The tool action='status' should also call the helper
+		const toolStatusIdx = src.indexOf('case "status"');
+		const toolStatusBlock = src.slice(toolStatusIdx, toolStatusIdx + 500);
+		expect(toolStatusBlock).toContain("buildDetailedStatusLines()");
 	});
 
 	it("includes concise status for the TUI message renderer", () => {

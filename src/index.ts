@@ -2,7 +2,7 @@
  * pi-ghpr-monitor — Pi extension for monitoring GitHub PRs
  *
  * Registers:
- *   /ghpr-monitor [on|off|status|owner/repo#number|check]  — user-facing command (no args = show status/usage)
+ *   /ghpr-monitor [on|off|status|owner/repo#number|check]  — user-facing command (no args = show status if monitoring, else ask agent)
  *   ghpr-monitor                                 — LLM-callable tool
  *
  * The tool polls one or more PRs for comments, conflicts, and CI status,
@@ -696,6 +696,23 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 		}
 	}
 
+	// Build detailed status lines for display (shared by /ghpr-monitor status command
+	// and ghpr-monitor tool action='status')
+	function buildDetailedStatusLines(): string[] {
+		if (monitors.size === 0) return [];
+		const lines: string[] = [`Monitoring ${monitors.size} PR(s):`];
+		for (const [key, mon] of monitors) {
+			const ts = mon.lastStatusTimestamp ? mon.lastStatusTimestamp.toLocaleString() : "unknown";
+			if (mon.lastStatus) {
+				const statusLine = `${key}: ${mon.lastStatus.unresolvedThreads} unresolved threads, ${mon.lastStatus.generalComments} comments, conflicts: ${mon.lastStatus.hasConflicts}, failing: ${mon.lastStatus.failingChecks.join(", ") || "none"} (last checked: ${ts})`;
+				lines.push(statusLine);
+			} else {
+				lines.push(`${key}: No status update received yet.`);
+			}
+		}
+		return lines;
+	}
+
 	// Format the current monitor status for display
 	function formatCurrentStatus(): string {
 		if (monitors.size === 0) return "";
@@ -723,7 +740,7 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 	// -----------------------------------------------------------------------
 
 	pi.registerCommand("ghpr-monitor", {
-		description: "Monitor PRs: /ghpr-monitor [PR URL] [message] — /ghpr-monitor status — /ghpr-monitor check [PR] — /ghpr-monitor off [PR] — leave blank to show status/usage",
+		description: "Monitor PRs: /ghpr-monitor [PR URL] [message] — /ghpr-monitor status — /ghpr-monitor check [PR] — /ghpr-monitor off [PR] — blank shows status or starts monitoring",
 		getArgumentCompletions: (prefix: string) => {
 			const completions = ["on", "off", "stop", "check", "status", "https://github.com"];
 			// Add currently monitored PRs as completions for off/check
@@ -765,19 +782,7 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 					return;
 				}
 				const conciseStatus = formatCurrentStatus();
-				// Build detailed status for the LLM context
-				const lines: string[] = [`Monitoring ${monitors.size} PR(s):`];
-				for (const [key, mon] of monitors) {
-					const c = mon.config;
-					const ts = mon.lastStatusTimestamp ? mon.lastStatusTimestamp.toLocaleString() : "unknown";
-					if (mon.lastStatus) {
-						const statusLine = `${key}: ${mon.lastStatus.unresolvedThreads} unresolved threads, ${mon.lastStatus.generalComments} comments, conflicts: ${mon.lastStatus.hasConflicts}, failing: ${mon.lastStatus.failingChecks.join(", ") || "none"} (last checked: ${ts})`;
-						lines.push(statusLine);
-					} else {
-						lines.push(`${key}: No status update received yet.`);
-					}
-				}
-				const detailedStatus = lines.join("\n");
+				const detailedStatus = buildDetailedStatusLines().join("\n");
 				// Display in TUI via registered message renderer (display: true)
 				// and inject into LLM context via deliverAs: "nextTurn"
 				// — this does NOT trigger an agent turn
@@ -1082,20 +1087,10 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 						};
 					}
 
-					const lines: string[] = [`Monitoring ${monitors.size} PR(s):`];
-					for (const [key, mon] of monitors) {
-						const c = mon.config;
-						const ts = mon.lastStatusTimestamp ? mon.lastStatusTimestamp.toLocaleString() : "unknown";
-						if (mon.lastStatus) {
-							const statusLine = `${key}: ${mon.lastStatus.unresolvedThreads} unresolved threads, ${mon.lastStatus.generalComments} comments, conflicts: ${mon.lastStatus.hasConflicts}, failing: ${mon.lastStatus.failingChecks.join(", ") || "none"} (last checked: ${ts})`;
-							lines.push(statusLine);
-						} else {
-							lines.push(`${key}: No status update received yet.`);
-						}
-					}
+					const detailedStatus = buildDetailedStatusLines().join("\n");
 
 					return {
-						content: [{ type: "text", text: lines.join("\n") }],
+						content: [{ type: "text", text: detailedStatus }],
 						details: {
 							action: "status",
 							status: "running",
