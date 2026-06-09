@@ -43,11 +43,14 @@ describe("no-args behavior without steer message", () => {
 		const onBlockStart = src.indexOf('if (raw.toLowerCase() === "on" || raw === "")');
 		expect(onBlockStart).toBeGreaterThan(-1);
 
+		const monitorsCheckStart = src.indexOf("if (monitors.size > 0)", onBlockStart);
+		expect(monitorsCheckStart).toBeGreaterThan(-1);
+
+		const noMonitorsCommentIdx = src.indexOf("// No monitors running", onBlockStart);
+		expect(noMonitorsCommentIdx).toBeGreaterThan(-1);
+
 		// The "already monitoring" branch must show current status
-		const runningBranch = src.slice(
-			src.indexOf("if (monitors.size > 0)", onBlockStart),
-			src.indexOf("// No monitors running", onBlockStart),
-		);
+		const runningBranch = src.slice(monitorsCheckStart, noMonitorsCommentIdx);
 		expect(runningBranch).toContain("formatCurrentStatus()");
 		expect(runningBranch).toContain("ctx.ui.notify(statusText");
 	});
@@ -56,8 +59,15 @@ describe("no-args behavior without steer message", () => {
 		const onBlockStart = src.indexOf('if (raw.toLowerCase() === "on" || raw === "")');
 		expect(onBlockStart).toBeGreaterThan(-1);
 
-		// After "No monitors running", there should be a ctx.ui.notify with usage info
-		const noMonitorsBranch = src.slice(onBlockStart, onBlockStart + 1200);
+		// Find the no-monitors branch specifically — scoped between the comment marker
+		// and the next "return" statement
+		const noMonitorsCommentIdx = src.indexOf("// No monitors running", onBlockStart);
+		expect(noMonitorsCommentIdx).toBeGreaterThan(-1);
+
+		const returnAfterNoMonitors = src.indexOf("return;", noMonitorsCommentIdx);
+		expect(returnAfterNoMonitors).toBeGreaterThan(-1);
+
+		const noMonitorsBranch = src.slice(noMonitorsCommentIdx, returnAfterNoMonitors);
 		expect(noMonitorsBranch).toContain("No PR monitors running");
 		expect(noMonitorsBranch).toContain("ctx.ui.notify");
 		// Should NOT be an error or warning — just info
