@@ -131,8 +131,9 @@ const TEMPLATE_VAR_RE = /\{(owner|repo|number|host|prLabel|unresolvedThreads|gen
 /** Non-global version for .test() checks. The /g flag causes .test() to
  *  advance lastIndex across successive calls, producing false negatives.
  *  Use TEMPLATE_VAR_RE for .replace() (needs /g) and this for .test().
+ *  Derived from TEMPLATE_VAR_RE.source to keep a single source of truth.
  */
-const TEMPLATE_VAR_RE_NONGLOBAL = /\{(owner|repo|number|host|prLabel|unresolvedThreads|generalComments|failingChecks|conflict|intervalSec)\}/;
+const TEMPLATE_VAR_RE_NONGLOBAL = new RegExp(TEMPLATE_VAR_RE.source);
 
 /**
  * Replace template placeholders with actual values.

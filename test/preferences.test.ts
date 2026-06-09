@@ -104,7 +104,7 @@ describe("validatePreferences", () => {
 		expect(result.ok).toBe(false);
 	});
 
-	it("accepts empty string values", () => {
+	it("accepts empty string values (not treated as bare strings)", () => {
 		const result = validatePreferences('{"conflict": ""}');
 		expect(result.ok).toBe(true);
 		expect(result.preferences!.conflict).toBe("");
@@ -136,11 +136,6 @@ describe("validatePreferences", () => {
 		expect(result.ok).toBe(true);
 	});
 
-	it("empty string values are not treated as bare strings", () => {
-		const result = validatePreferences('{"conflict": ""}');
-		expect(result.ok).toBe(true);
-		expect(result.preferences!.conflict).toBe("");
-	});
 });
 
 // ---------------------------------------------------------------------------
