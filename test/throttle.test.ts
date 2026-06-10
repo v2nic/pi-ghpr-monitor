@@ -593,7 +593,7 @@ describe("Check now command", () => {
 			getWaitSec(): number {
 				const baseSec = backoffSec > 0 ? backoffSec : INTERVAL_SEC;
 				const idleSec = consecutiveNoChange > 3
-					? Math.min(INTERVAL_SEC * Math.pow(2, consecutiveNoChange - 3), 3600)
+					? Math.min(INTERVAL_SEC * Math.pow(2, consecutiveNoChange - 3), 300)
 					: baseSec;
 				return idleSec;
 			},
@@ -753,6 +753,75 @@ describe("No spam for unchanged failing checks", () => {
 		const second = formatStatusUpdate(withConflict, withConflict, config);
 		expect(second).not.toContain("Merge conflicts");
 		expect(second).toBe("");
+	});
+});
+
+// Test that idle backoff is capped at 5 minutes (not 1 hour)
+// This prevents the monitor from "going silent" — the old MAX_IDLE_SEC of 3600
+// meant polls grew to once per hour, making the monitor effectively dead.
+describe("Idle backoff caps at 5 minutes", () => {
+	const INTERVAL_SEC = 60;
+	const MAX_IDLE_SEC = 300; // must match src/index.ts
+
+	function computeWaitSec(consecutiveNoChange: number, backoffSec: number): number {
+		const idleSec = consecutiveNoChange > 3
+			? Math.min(INTERVAL_SEC * Math.pow(2, consecutiveNoChange - 3), MAX_IDLE_SEC)
+			: INTERVAL_SEC;
+		return backoffSec > 0 ? backoffSec : idleSec;
+	}
+
+	it("uses base interval for first 4 polls", () => {
+		expect(computeWaitSec(0, 0)).toBe(60);
+		expect(computeWaitSec(1, 0)).toBe(60);
+		expect(computeWaitSec(2, 0)).toBe(60);
+		expect(computeWaitSec(3, 0)).toBe(60);
+	});
+
+	it("starts exponential backoff after 3 consecutive no-change polls", () => {
+		expect(computeWaitSec(4, 0)).toBe(120);  // 60 * 2^1
+		expect(computeWaitSec(5, 0)).toBe(240);  // 60 * 2^2
+	});
+
+	it("caps at 300s (5 minutes) regardless of consecutive no-change count", () => {
+		// Previously this was 3600 (1 hour!) which made the monitor effectively dead
+		expect(computeWaitSec(6, 0)).toBe(300);  // 60 * 2^3 = 480 -> capped at 300
+		expect(computeWaitSec(7, 0)).toBe(300);  // 60 * 2^4 = 960 -> capped at 300
+		expect(computeWaitSec(8, 0)).toBe(300);  // 60 * 2^5 = 1920 -> capped at 300
+		expect(computeWaitSec(9, 0)).toBe(300);  // 60 * 2^6 = 3840 -> capped at 300
+		expect(computeWaitSec(100, 0)).toBe(300); // stays capped forever
+	});
+
+	it("never exceeds 5 minutes even after hours of inactivity", () => {
+		// Simulate a monitor that has been idle for a very long time
+		// (e.g., overnight). It should still poll within 5 minutes.
+		for (let i = 0; i <= 200; i++) {
+			const wait = computeWaitSec(i, 0);
+			expect(wait).toBeLessThanOrEqual(300);
+		}
+	});
+
+	it("error backoff takes precedence over idle backoff", () => {
+		// When there's an active error backoff, use that instead of idle backoff
+		expect(computeWaitSec(0, 120)).toBe(120);
+		expect(computeWaitSec(5, 240)).toBe(240);
+		// Copilot review catch: consecutiveNoChange > 3 with high backoffSec
+		// Previously this used the idle formula (120s) instead of backoffSec (300s)
+		expect(computeWaitSec(4, 300)).toBe(300);
+		expect(computeWaitSec(10, 120)).toBe(120);
+		expect(computeWaitSec(100, 300)).toBe(300);
+	});
+
+	it("polling interval does not depend on agentTurnActive and error backoff takes precedence", () => {
+		// Previously: waitSec = agentTurnActive ? Math.max(idleSec, 300) : idleSec
+		// This meant polling was delayed 5+ minutes when agent was working,
+		// exactly when the user needs CI status updates.
+		// Now: waitSec = backoffSec > 0 ? backoffSec : idleSec
+		// (polling is decoupled from agent activity; error backoff takes precedence over idle)
+		const src = require("fs").readFileSync(require("path").join(__dirname, "../src/index.ts"), "utf-8");
+		// Verify the old pattern is gone
+		expect(src).not.toContain("agentTurnActive ? Math.max(idleSec");
+		// Verify waitSec uses backoffSec when present, otherwise idleSec
+		expect(src).toContain("const waitSec = mon.backoffSec > 0 ? mon.backoffSec : idleSec;");
 	});
 });
 
