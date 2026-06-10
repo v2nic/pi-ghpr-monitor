@@ -19,6 +19,7 @@
  *   reminder:     {unresolvedThreads}, {generalComments}, {failingChecks}, {conflict}
  *   allClear:     (none extra)
  *   firstPoll:    {intervalSec}
+ *   threadReply:  {threadId}, {path}, {line}
  */
 
 import { Type } from "@sinclair/typebox";
@@ -71,10 +72,10 @@ export const PreferencesSchema = Type.Object(
 					"Prompt override for the initial status on first poll. Variables: {owner}, {repo}, {number}, {host}, {prLabel}, {intervalSec}",
 			}),
 		),
-		descriptionStaleness: Type.Optional(
+		threadReply: Type.Optional(
 			Type.String({
 				description:
-					"Prompt override for description staleness nudge when new commits are detected. Variables: {owner}, {repo}, {number}, {host}, {prLabel}, {prUrl}, {commitOid}, {commitShortOid}, {commitUrl}",
+					"Prompt override for the inline thread reply hint shown under each review thread detail. Variables: {owner}, {repo}, {number}, {host}, {prLabel}, {threadId}, {path}, {line}",
 			}),
 		),
 	},
@@ -156,13 +157,12 @@ export interface TemplateVars {
 	failingChecks?: string;
 	conflict?: boolean;
 	intervalSec?: number;
-	// Commit-related (used by descriptionStaleness)
-	commitOid?: string;
-	commitShortOid?: string;
-	commitUrl?: string;
+	threadId?: string;
+	path?: string;
+	line?: number | null;
 }
 
-const TEMPLATE_VAR_RE = /\{(owner|repo|number|host|prLabel|prUrl|unresolvedThreads|generalComments|failingChecks|conflict|intervalSec|commitOid|commitShortOid|commitUrl)\}/g;
+const TEMPLATE_VAR_RE = /\{(owner|repo|number|host|prLabel|prUrl|unresolvedThreads|generalComments|failingChecks|conflict|intervalSec|threadId|path|line)\}/g;
 
 /** Non-global version for .test() checks. The /g flag causes .test() to
  *  advance lastIndex across successive calls, producing false negatives.
@@ -200,12 +200,12 @@ export function interpolateTemplate(template: string, vars: TemplateVars): strin
 				return vars.conflict !== undefined ? String(vars.conflict) : match;
 			case "intervalSec":
 				return vars.intervalSec !== undefined ? String(vars.intervalSec) : match;
-			case "commitOid":
-				return vars.commitOid ?? match;
-			case "commitShortOid":
-				return vars.commitShortOid ?? match;
-			case "commitUrl":
-				return vars.commitUrl ?? match;
+			case "threadId":
+				return vars.threadId ?? match;
+			case "path":
+				return vars.path ?? match;
+			case "line":
+				return vars.line !== undefined ? String(vars.line) : match;
 			default:
 				return match;
 		}

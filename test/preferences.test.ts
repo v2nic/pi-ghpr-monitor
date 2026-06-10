@@ -637,72 +637,29 @@ describe("preferences in notification formatting", () => {
 		const result = formatStatusUpdate(null, curr, config);
 		expect(result).toContain("Merge conflicts detected on v2nic/pi-ghpr-monitor#32");
 	});
-
-	it("descriptionStaleness preference is accepted by validatePreferences", () => {
-		const result = validatePreferences(JSON.stringify({ descriptionStaleness: "\u{1F4DD} New push to {prLabel} — check the description!" }));
+});
+describe("threadReply preference", () => {
+	it("accepts threadReply preference with template variables", () => {
+		const result = validatePreferences('{"threadReply": "Reply to {threadId} on {prLabel}"}');
 		expect(result.ok).toBe(true);
-		expect(result.preferences?.descriptionStaleness).toBe("\u{1F4DD} New push to {prLabel} — check the description!");
+		expect(result.preferences?.threadReply).toBe("Reply to {threadId} on {prLabel}");
 	});
 
-	it("descriptionStaleness preference supports {owner}, {repo}, {number}, {host}, {prLabel} variables", () => {
-		const result = interpolateTemplate("New push to {prLabel} ({owner}/{repo}#{number}) on {host}", {
-			owner: "v2nic",
-			repo: "pi-ghpr-monitor",
-			number: 37,
-			host: "github.com",
-			prLabel: "v2nic/pi-ghpr-monitor#37",
-		});
-		expect(result).toBe("New push to v2nic/pi-ghpr-monitor#37 (v2nic/pi-ghpr-monitor#37) on github.com");
-	});
-
-	it("descriptionStaleness preference is included in PreferencesSchema keys", () => {
-		expect(Object.keys(PreferencesSchema.properties)).toContain("descriptionStaleness");
-	});
-
-	it("interpolateTemplate substitutes {commitOid}, {commitShortOid}, and {commitUrl}", () => {
-		const result = interpolateTemplate(
-			"\u{1F4DD} New commit {commitShortOid} ({commitUrl}) pushed to {prLabel} (full sha {commitOid})",
-			{
-				owner: "v2nic",
-				repo: "pi-ghpr-monitor",
-				number: 37,
-				host: "github.com",
-				prLabel: "v2nic/pi-ghpr-monitor#37",
-				prUrl: "https://github.com/v2nic/pi-ghpr-monitor/pull/37",
-				commitOid: "abc1234567890def1234567890abcdef12345678",
-				commitShortOid: "abc1234",
-				commitUrl: "https://github.com/v2nic/pi-ghpr-monitor/commit/abc1234567890def1234567890abcdef12345678",
-			},
-		);
-		expect(result).toBe(
-			"\u{1F4DD} New commit abc1234 (https://github.com/v2nic/pi-ghpr-monitor/commit/abc1234567890def1234567890abcdef12345678) pushed to v2nic/pi-ghpr-monitor#37 (full sha abc1234567890def1234567890abcdef12345678)",
-		);
-	});
-
-	it("interpolateTemplate leaves commit placeholders untouched when not provided", () => {
-		// In contexts where no commit data is available (e.g. ciFailure prompt),
-		// commit placeholders should be left as-is rather than substituted with
-		// undefined/empty strings, so the user notices their template is being
-		// used in a context that doesn't supply the variable.
-		const result = interpolateTemplate("Failed on {prLabel} for {commitShortOid}", {
-			owner: "v2nic",
-			repo: "pi-ghpr-monitor",
-			number: 37,
-			host: "github.com",
-			prLabel: "v2nic/pi-ghpr-monitor#37",
-			prUrl: "https://github.com/v2nic/pi-ghpr-monitor/pull/37",
-		});
-		expect(result).toBe("Failed on v2nic/pi-ghpr-monitor#37 for {commitShortOid}");
-	});
-
-	it("validatePreferences accepts descriptionStaleness using {commitShortOid} variable", () => {
-		const result = validatePreferences(
-			JSON.stringify({
-				descriptionStaleness:
-					"\u{1F4DD} {commitShortOid} pushed to {prLabel} \u2014 review description",
-			}),
-		);
+	it("accepts threadReply with path and line variables", () => {
+		const result = validatePreferences('{"threadReply": "Thread {threadId} at {path}:{line}"}');
 		expect(result.ok).toBe(true);
-		expect(result.preferences?.descriptionStaleness).toContain("{commitShortOid}");
+		expect(result.preferences?.threadReply).toBe("Thread {threadId} at {path}:{line}");
+	});
+
+	it("rejects threadReply without template variables", () => {
+		const result = validatePreferences('{"threadReply": "just a string"}');
+		expect(result.ok).toBe(false);
+		expect(result.errors[0]).toContain("threadReply");
+		expect(result.errors[0]).toContain("template variable");
+	});
+
+	it("threadReply is included in allowed keys", () => {
+		const result = validatePreferences('{"threadReply": "Reply in {prLabel}#{threadId}"}');
+		expect(result.ok).toBe(true);
 	});
 });

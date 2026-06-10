@@ -389,7 +389,9 @@ function makeTemplateVars(config: MonitorConfig, extra?: Partial<TemplateVars>):
 		number: config.number,
 		host: config.host,
 		prLabel: `${config.owner}/${config.repo}#${config.number}`,
-		prUrl: `https://${config.host}/${config.owner}/${config.repo}/pull/${config.number}`,
+		threadId: undefined,
+		path: undefined,
+		line: undefined,
 		...extra,
 	};
 }
@@ -428,9 +430,9 @@ export function formatStatusUpdate(prev: PRStatus | null, curr: PRStatus, config
 		const prevCount = prev?.unresolvedThreads ?? 0;
 		const threadLines = formatThreadDetails(curr.threadDetails ?? [], prev?.threadDetails);
 		const defaultThreadPrefix = curr.unresolvedThreads > prevCount
-			? `💬 ${curr.unresolvedThreads - prevCount} new unresolved review thread(s) on ${prLabel} (${curr.unresolvedThreads} total):`
+			? `💬 Review thread comments (reply inline): ${curr.unresolvedThreads - prevCount} new on ${prLabel} (${curr.unresolvedThreads} total):`
 			: !prev
-				? `💬 ${curr.unresolvedThreads} unresolved review thread(s) on ${prLabel}:`
+				? `💬 Review thread comments (reply inline): ${curr.unresolvedThreads} on ${prLabel}:`
 				: null;
 		if (defaultThreadPrefix) {
 			if (prefs?.newComments && !newCommentsPrefEmitted) {
@@ -446,6 +448,7 @@ export function formatStatusUpdate(prev: PRStatus | null, curr: PRStatus, config
 		}
 		if (threadLines) {
 			lines.push(threadLines);
+			lines.push("  Reply inline to each review thread using: gh api graphql -f query='mutation { addPullRequestReviewThreadComment(input: {pullRequestReviewThreadId: \"<thread_id>\", body: \"your reply\"}) { comment { id } } }'");
 			lines.push("  After replying, resolve each thread: gh api graphql -f query='mutation{resolveReviewThread(input:{threadId:\"<id>\"}){thread{isResolved}}}'");
 			lines.push("  React with 👍 on non-actionable comments to acknowledge and stop notifications.");
 		}
@@ -455,9 +458,9 @@ export function formatStatusUpdate(prev: PRStatus | null, curr: PRStatus, config
 		const prevCount = prev?.generalComments ?? 0;
 		const commentLines = formatCommentDetails(curr.commentDetails ?? [], prev?.commentDetails);
 		const defaultCommentPrefix = curr.generalComments > prevCount
-			? `💭 ${curr.generalComments - prevCount} new general comment(s) on ${prLabel}:`
+			? `💭 General comments (reply top-level): ${curr.generalComments - prevCount} new on ${prLabel}:`
 			: !prev
-				? `💭 ${curr.generalComments} general comment(s) on ${prLabel}:`
+				? `💭 General comments (reply top-level): ${curr.generalComments} on ${prLabel}:`
 				: null;
 		if (defaultCommentPrefix) {
 			// If newComments preference was already emitted for threads, skip the comment line;
@@ -598,11 +601,12 @@ export function formatActionableItems(status: PRStatus, config: MonitorConfig, p
 			})));
 			newCommentsPrefEmitted = true;
 		} else if (!prefs?.newComments) {
-			lines.push(`💬 ${status.unresolvedThreads} unresolved review thread(s) on ${prLabel}:`);
+			lines.push(`💬 Review thread comments (reply inline): ${status.unresolvedThreads} on ${prLabel}:`);
 		}
 		const threadLines = formatThreadDetails(status.threadDetails ?? []);
 		if (threadLines) {
 			lines.push(threadLines);
+			lines.push("  Reply inline to each review thread using: gh api graphql -f query='mutation { addPullRequestReviewThreadComment(input: {pullRequestReviewThreadId: \"<thread_id>\", body: \"your reply\"}) { comment { id } } }'");
 			lines.push("  After replying, resolve each thread: gh api graphql -f query='mutation{resolveReviewThread(input:{threadId:\"<id>\"}){thread{isResolved}}}'");
 			lines.push("  React with 👍 on non-actionable comments to acknowledge and stop notifications.");
 		}
@@ -616,7 +620,7 @@ export function formatActionableItems(status: PRStatus, config: MonitorConfig, p
 			})));
 			newCommentsPrefEmitted = true;
 		} else if (!prefs?.newComments) {
-			lines.push(`💭 ${status.generalComments} general comment(s) on ${prLabel}:`);
+			lines.push(`💭 General comments (reply top-level): ${status.generalComments} on ${prLabel}:`);
 		}
 		const commentLines = formatCommentDetails(status.commentDetails ?? []);
 		if (commentLines) {
@@ -888,9 +892,10 @@ function formatDiffLinesTruncated(diffLines: string[]): string {
 
 /**
  * Format a thread detail block for the agent, including full comment bodies,
- * file path, line number, and all comments in the conversation.
+ * file path, line number, all comments in the conversation, and a hint
+ * for replying inline to the specific thread.
  */
-function formatThreadDetailBlock(thread: ThreadSummary): string {
+function formatThreadDetailBlock(thread: ThreadSummary, config: MonitorConfig, prefs?: Preferences): string {
 	const lines: string[] = [];
 	const location = thread.path
 		? `${thread.path}${thread.line != null ? `:${thread.line}` : ""}`
@@ -917,6 +922,13 @@ function formatThreadDetailBlock(thread: ThreadSummary): string {
 		// Fallback: only last comment available
 		lines.push(`  ${thread.lastCommentAuthor}: ${thread.fullBody ?? thread.lastCommentBody}`);
 	}
+
+	// Add thread reply hint
+	const defaultReplyHint = `  Reply to this thread: gh api graphql -f query='mutation { addPullRequestReviewThreadComment(input: {pullRequestReviewThreadId: "${thread.id}", body: "your reply"}) { comment { id } } }'`;
+	const replyHint = prefs?.threadReply
+		? interpolateTemplate(prefs.threadReply, makeTemplateVars(config, { threadId: thread.id, path: thread.path, line: thread.line }))
+		: defaultReplyHint;
+	lines.push(replyHint);
 
 	return lines.join("\n");
 }
@@ -948,7 +960,7 @@ export function formatAgentNotification(status: PRStatus, config: MonitorConfig,
 		detailLines.push("");
 		detailLines.push("Review thread details:");
 		for (const thread of threadsWithDetails) {
-			detailLines.push(formatThreadDetailBlock(thread));
+			detailLines.push(formatThreadDetailBlock(thread, config, prefs));
 		}
 	}
 
@@ -990,7 +1002,7 @@ export function formatAgentStatusUpdate(prev: PRStatus | null, curr: PRStatus, c
 		detailLines.push("");
 		detailLines.push("Review thread details:");
 		for (const thread of newThreads) {
-			detailLines.push(formatThreadDetailBlock(thread));
+			detailLines.push(formatThreadDetailBlock(thread, config, prefs));
 		}
 	}
 

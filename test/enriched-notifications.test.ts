@@ -297,7 +297,7 @@ describe("formatAgentNotification", () => {
 		expect(result).not.toBeNull();
 
 		// Concise version (TUI) should contain the truncated summary
-		expect(result!.concise).toContain("1 unresolved review thread(s)");
+		expect(result!.concise).toContain("Review thread comments (reply inline): 1 on");
 		expect(result!.concise).toContain("PRRT_kwDOO45Fys6AY8FC");
 		// Concise should contain truncated body (with ellipsis) but NOT the full untruncated text
 		expect(result!.concise).toContain("…");
@@ -327,7 +327,7 @@ describe("formatAgentNotification", () => {
 		expect(result).not.toBeNull();
 
 		// Concise shows truncated body
-		expect(result!.concise).toContain("1 general comment(s)");
+		expect(result!.concise).toContain("General comments (reply top-level): 1 on");
 		expect(result!.concise).toContain("Quality Gate Passed");
 		// Detailed shows full body
 		expect(result!.detailed).toContain("All 5 conditions met");
@@ -682,7 +682,7 @@ describe("real-world session: copilot review comment", () => {
 		expect(result).not.toBeNull();
 
 		// Concise: TUI shows just the one-liner (matches original output)
-		expect(result!.concise).toContain("1 unresolved review thread(s) on mobilityhouse/vgi-na-masscec#436");
+		expect(result!.concise).toContain("Review thread comments (reply inline): 1 on mobilityhouse/vgi-na-masscec#436");
 		expect(result!.concise).toContain("PRRT_kwDOO45Fys6AY8FC");
 
 		// Detailed: agent gets full body, path, and line

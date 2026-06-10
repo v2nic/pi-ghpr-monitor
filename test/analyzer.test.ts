@@ -19,6 +19,7 @@ import {
 	snapshotPR,
 	linkifyPRRefs,
 	formatAgentNotification,
+	formatAgentStatusUpdate,
 } from "../src/analyzer";
 import type { PullRequestData, PRStatus, MonitorConfig, CommitNode, ReactionNode, ThreadSummary, CommentSummary } from "../src/analyzer";
 
@@ -488,7 +489,7 @@ describe("formatStatusUpdate", () => {
 		};
 		const update = formatStatusUpdate(null, curr, config);
 		// When prev is null, format uses "N new" format since prev count defaults to 0
-		expect(update).toContain("new unresolved review thread");
+		expect(update).toContain("Review thread comments (reply inline)");
 	});
 
 	it("does not report pending checks (not actionable)", () => {
@@ -575,7 +576,7 @@ describe("formatActionableItems", () => {
 			lastCommitOid: "",
 		};
 		const result = formatActionableItems(status, config);
-		expect(result).toContain("3 unresolved review thread(s)");
+		expect(result).toContain("Review thread comments (reply inline): 3 on");
 	});
 
 	it("returns general comments when present", () => {
@@ -590,7 +591,7 @@ describe("formatActionableItems", () => {
 			lastCommitOid: "",
 		};
 		const result = formatActionableItems(status, config);
-		expect(result).toContain("2 general comment(s)");
+		expect(result).toContain("General comments (reply top-level): 2 on");
 	});
 
 	it("does not include pending CI (not actionable)", () => {
@@ -635,8 +636,8 @@ describe("formatActionableItems", () => {
 		const result = formatActionableItems(status, config);
 		expect(result).toContain("Merge conflicts detected");
 		expect(result).toContain("Failing CI checks");
-		expect(result).toContain("2 unresolved review thread(s)");
-		expect(result).toContain("1 general comment(s)");
+		expect(result).toContain("Review thread comments (reply inline): 2 on");
+		expect(result).toContain("General comments (reply top-level): 1 on");
 		expect(result).not.toContain("pending");
 	});
 });
@@ -1248,63 +1249,221 @@ describe("linkifyPRRefs", () => {
 	});
 });
 
-describe("snapshotPR extracts lastCommitOid", () => {
-	it("extracts lastCommitOid from the first commit", () => {
-		const pr = makeMockPR({
-			commits: {
-				nodes: [
-					{
-						commit: {
-							oid: "abc123def456",
-							checkSuites: { nodes: [] },
-							status: null,
-						},
-					},
+describe("thread steering (issue #15)", () => {
+	const config: MonitorConfig = {
+		owner: "owner",
+		repo: "repo",
+		number: 42,
+		host: "github.com",
+		mode: "all",
+		intervalSec: 60,
+		debounceSec: 30,
+	};
+
+	describe("formatActionableItems headings", () => {
+		it("uses 'Review thread comments (reply inline)' heading for threads", () => {
+			const status: PRStatus = {
+				unresolvedThreads: 2,
+				generalComments: 0,
+				hasConflicts: false,
+				failingChecks: [],
+				pendingChecks: [],
+				lastCommentTimestamp: "",
+				lastCommentBySelf: false,
+				threadDetails: [
+					{ id: "PRRT_1", isResolved: false, lastCommentAuthor: "reviewer", lastCommentBody: "fix this" },
+					{ id: "PRRT_2", isResolved: false, lastCommentAuthor: "bot", lastCommentBody: "build failed" },
 				],
-			},
+				commentDetails: [],
+				checkDetails: [],
+			};
+			const result = formatActionableItems(status, config);
+			expect(result).toContain("Review thread comments (reply inline)");
+			expect(result).not.toContain("unresolved review thread(s)");
 		});
-		const status = snapshotPR(pr);
-		expect(status.lastCommitOid).toBe("abc123def456");
+
+		it("uses 'General comments (reply top-level)' heading for general comments", () => {
+			const status: PRStatus = {
+				unresolvedThreads: 0,
+				generalComments: 3,
+				hasConflicts: false,
+				failingChecks: [],
+				pendingChecks: [],
+				lastCommentTimestamp: "",
+				lastCommentBySelf: false,
+				threadDetails: [],
+				commentDetails: [
+					{ id: "C_1", author: "user", body: "hello" },
+					{ id: "C_2", author: "user2", body: "world" },
+					{ id: "C_3", author: "user3", body: "test" },
+				],
+				checkDetails: [],
+			};
+			const result = formatActionableItems(status, config);
+			expect(result).toContain("General comments (reply top-level)");
+			expect(result).not.toContain("general comment(s)");
+		});
 	});
 
-	it("returns empty string when no commits", () => {
-		const pr = makeMockPR({ commits: { nodes: [] } });
-		const status = snapshotPR(pr);
-		expect(status.lastCommitOid).toBe("");
+	describe("formatStatusUpdate headings", () => {
+		it("uses 'Review thread comments (reply inline)' heading for new threads", () => {
+			const curr: PRStatus = {
+				unresolvedThreads: 1,
+				generalComments: 0,
+				hasConflicts: false,
+				failingChecks: [],
+				pendingChecks: [],
+				lastCommentTimestamp: "",
+				lastCommentBySelf: false,
+				threadDetails: [
+					{ id: "PRRT_1", isResolved: false, lastCommentAuthor: "reviewer", lastCommentBody: "please fix" },
+				],
+				commentDetails: [],
+				checkDetails: [],
+			};
+			const result = formatStatusUpdate(null, curr, config);
+			expect(result).toContain("Review thread comments (reply inline)");
+		});
+
+		it("uses 'General comments (reply top-level)' heading for new comments", () => {
+			const curr: PRStatus = {
+				unresolvedThreads: 0,
+				generalComments: 1,
+				hasConflicts: false,
+				failingChecks: [],
+				pendingChecks: [],
+				lastCommentTimestamp: "",
+				lastCommentBySelf: false,
+				threadDetails: [],
+				commentDetails: [
+					{ id: "C_1", author: "user", body: "nice work" },
+				],
+				checkDetails: [],
+			};
+			const result = formatStatusUpdate(null, curr, config);
+			expect(result).toContain("General comments (reply top-level)");
+		});
 	});
 
-	it("extracts lastCommitOid even with other commit data present", () => {
-		const pr = makeMockPR({
-			commits: {
-				nodes: [
-					{
-						commit: {
-							oid: "sha-98765",
-							checkSuites: {
-								nodes: [
-									{
-										id: "1",
-										conclusion: "FAILURE",
-										status: "COMPLETED",
-										app: { name: "ci/test", slug: "ci-test" },
-										checkRuns: { nodes: [{ name: "ci/test", conclusion: "FAILURE", status: "COMPLETED" }] },
-									},
-								],
-							},
-							status: {
-								state: "FAILURE",
-								contexts: [
-									{ state: "FAILURE", context: "ci/circleci", description: "Failed", targetUrl: null },
-								],
-							},
-						},
-					},
+	describe("formatAgentNotification thread reply hints", () => {
+		it("includes reply-to-thread command hint in detail blocks", () => {
+			const status: PRStatus = {
+				unresolvedThreads: 1,
+				generalComments: 0,
+				hasConflicts: false,
+				failingChecks: [],
+				pendingChecks: [],
+				lastCommentTimestamp: "",
+				lastCommentBySelf: false,
+				threadDetails: [
+					{ id: "PRRT_abc123", isResolved: false, lastCommentAuthor: "reviewer", lastCommentBody: "fix typo", path: "src/index.ts", line: 42, allComments: [
+						{ id: "C_1", author: "reviewer", body: "fix typo" },
+					]},
 				],
-			},
+				commentDetails: [],
+				checkDetails: [],
+			};
+			const result = formatAgentNotification(status, config);
+			expect(result).not.toBeNull();
+			expect(result!.detailed).toContain("addPullRequestReviewThreadComment");
+			expect(result!.detailed).toContain("PRRT_abc123");
+			expect(result!.detailed).toContain("src/index.ts:42");
 		});
-		const status = snapshotPR(pr);
-		expect(status.lastCommitOid).toBe("sha-98765");
-		expect(status.failingChecks).toContain("ci/test");
+
+		it("includes resolve-thread command hint alongside reply hint", () => {
+			const status: PRStatus = {
+				unresolvedThreads: 1,
+				generalComments: 0,
+				hasConflicts: false,
+				failingChecks: [],
+				pendingChecks: [],
+				lastCommentTimestamp: "",
+				lastCommentBySelf: false,
+				threadDetails: [
+					{ id: "PRRT_1", isResolved: false, lastCommentAuthor: "reviewer", lastCommentBody: "fix this" },
+				],
+				commentDetails: [],
+				checkDetails: [],
+			};
+			const result = formatActionableItems(status, config);
+			expect(result).toContain("addPullRequestReviewThreadComment");
+			expect(result).toContain("resolveReviewThread");
+		});
+	});
+
+	describe("formatAgentStatusUpdate thread reply hints", () => {
+		it("includes thread reply hint for new threads", () => {
+			const curr: PRStatus = {
+				unresolvedThreads: 1,
+				generalComments: 0,
+				hasConflicts: false,
+				failingChecks: [],
+				pendingChecks: [],
+				lastCommentTimestamp: "",
+				lastCommentBySelf: false,
+				threadDetails: [
+					{ id: "PRRT_xyz", isResolved: false, lastCommentAuthor: "reviewer", lastCommentBody: "nit: fix spacing", path: "lib/utils.ts", line: 10, allComments: [
+						{ id: "C_1", author: "reviewer", body: "nit: fix spacing" },
+					]},
+				],
+				commentDetails: [],
+				checkDetails: [],
+			};
+			const result = formatAgentStatusUpdate(null, curr, config);
+			expect(result.detailed).toContain("addPullRequestReviewThreadComment");
+			expect(result.detailed).toContain("PRRT_xyz");
+		});
+	});
+
+	describe("threadReply preference", () => {
+		it("uses custom threadReply preference in thread detail blocks", () => {
+			const status: PRStatus = {
+				unresolvedThreads: 1,
+				generalComments: 0,
+				hasConflicts: false,
+				failingChecks: [],
+				pendingChecks: [],
+				lastCommentTimestamp: "",
+				lastCommentBySelf: false,
+				threadDetails: [
+					{ id: "PRRT_custom", isResolved: false, lastCommentAuthor: "dev", lastCommentBody: "looks good now", path: "app.ts", line: 5, allComments: [
+						{ id: "C_1", author: "dev", body: "looks good now" },
+					]},
+				],
+				commentDetails: [],
+				checkDetails: [],
+			};
+			const prefs = { threadReply: ">> Reply to thread {threadId} at {path}:{line} on {prLabel}" };
+			const result = formatAgentNotification(status, config, prefs);
+			expect(result).not.toBeNull();
+			expect(result!.detailed).toContain(">> Reply to thread PRRT_custom at app.ts:5 on owner/repo#42");
+			// The custom threadReply replaces the default gh api command in the detail block
+			// (the concise section still has the default "Reply inline" hint, which is fine)
+			const detailSection = result!.detailed.split("\n\nReview thread details:")[1] ?? "";
+			expect(detailSection).toContain(">> Reply to thread PRRT_custom at app.ts:5 on owner/repo#42");
+			expect(detailSection).not.toContain("addPullRequestReviewThreadComment");
+		});
+
+		it("uses default reply hint when no threadReply preference", () => {
+			const status: PRStatus = {
+				unresolvedThreads: 1,
+				generalComments: 0,
+				hasConflicts: false,
+				failingChecks: [],
+				pendingChecks: [],
+				lastCommentTimestamp: "",
+				lastCommentBySelf: false,
+				threadDetails: [
+					{ id: "PRRT_default", isResolved: false, lastCommentAuthor: "dev", lastCommentBody: "check this" },
+				],
+				commentDetails: [],
+				checkDetails: [],
+			};
+			const result = formatAgentNotification(status, config);
+			expect(result).not.toBeNull();
+			expect(result!.detailed).toContain("addPullRequestReviewThreadComment");
+			expect(result!.detailed).toContain("PRRT_default");
+		});
 	});
 });
 

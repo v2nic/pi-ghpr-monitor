@@ -1276,7 +1276,7 @@ describe("Force check sends current state even when nothing changed", () => {
 		sim.poll(withComments);
 		expect(sim.getSentMessages()).toHaveLength(2);
 		expect(sim.getSentMessages()[1].type).toBe("check");
-		expect(sim.getSentMessages()[1].content).toContain("unresolved");
+		expect(sim.getSentMessages()[1].content).toContain("Review thread comments");
 	});
 
 	it("sends all-clear when force-checked on a clean PR", () => {
@@ -1332,7 +1332,7 @@ describe("Force check sends current state even when nothing changed", () => {
 		sim.turnEnd();
 		expect(sim.getSentMessages()).toHaveLength(2);
 		expect(sim.getSentMessages()[1].type).toBe("check");
-		expect(sim.getSentMessages()[1].content).toContain("unresolved");
+		expect(sim.getSentMessages()[1].content).toContain("Review thread comments");
 
 		// forceNotify flag was consumed -- subsequent polls don't re-send
 		sim.poll(withComments);
@@ -1397,7 +1397,7 @@ describe("Force check sends current state even when nothing changed", () => {
 		expect(sim.getSentMessages()).toHaveLength(3); // initial update + 2 checks
 		expect(sim.getSentMessages()[1].type).toBe("check");
 		expect(sim.getSentMessages()[2].type).toBe("check");
-		expect(sim.getSentMessages()[1].content).toContain("unresolved"); // first check (withComments)
+		expect(sim.getSentMessages()[1].content).toContain("Review thread comments"); // first check (withComments)
 		expect(sim.getSentMessages()[2].content).toContain("No issues"); // second check (clean)
 	});
 });
@@ -2060,7 +2060,7 @@ describe("First-poll overlap: no duplicate content from status update + reminder
 		expect(actionableItems).toContain("Failing CI checks");
 
 		// Both mention unresolved threads
-		expect(statusUpdate).toContain("unresolved review thread");
-		expect(actionableItems).toContain("unresolved review thread");
+		expect(statusUpdate).toContain("Review thread comments (reply inline)");
+		expect(actionableItems).toContain("Review thread comments");
 	});
 });
