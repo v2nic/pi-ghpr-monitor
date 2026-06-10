@@ -2,11 +2,16 @@
  * pi-ghpr-monitor — Pi extension for monitoring GitHub PRs
  *
  * Registers:
- *   /ghpr-monitor [on|off|status|owner/repo#number|check]  — user-facing command (no args = show status/usage)
+ *   /ghpr-monitor [!|start|on|off|status|owner/repo#number|check]  — user-facing command (no args = show status/usage)
  *   ghpr-monitor                                 — LLM-callable tool
  *
  * The tool polls one or more PRs for comments, conflicts, and CI status,
  * then injects notifications into the agent session so the LLM can take action.
+ *
+ * Starting a monitor with an explicit PR URL (/ghpr-monitor <URL>) is TUI-only:
+ * it shows a notification confirming the monitor started but does NOT trigger an
+ * agent turn. The /ghpr-monitor ! or /ghpr-monitor start subcommand injects a
+ * steering prompt so the LLM will find the current PR and start monitoring it.
  *
  * Multiple PRs can be monitored simultaneously — each runs its own
  * independent poll loop with its own state (backoff, status, reminders).
@@ -189,6 +194,7 @@ async function fetchPRData(config: MonitorConfig, signal?: AbortSignal, mockBase
 	return outer.data.repository.pullRequest;
 }
 
+// ---------------------------------------------------------------------------
 // ---------------------------------------------------------------------------
 // PR URL parser
 // ---------------------------------------------------------------------------
@@ -775,9 +781,9 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 	// -----------------------------------------------------------------------
 
 	pi.registerCommand("ghpr-monitor", {
-		description: "Monitor PRs: /ghpr-monitor [PR URL] [message] — /ghpr-monitor status — /ghpr-monitor check [PR] — /ghpr-monitor off [PR] — leave blank to show status/usage",
+		description: "Monitor PRs: /ghpr-monitor ! | start — /ghpr-monitor [PR URL] — /ghpr-monitor status — /ghpr-monitor check [PR] — /ghpr-monitor off [PR] — leave blank to show status/usage",
 		getArgumentCompletions: (prefix: string) => {
-			const completions = ["on", "off", "stop", "check", "status", "https://github.com"];
+			const completions = ["!", "start", "on", "off", "stop", "check", "status", "https://github.com"];
 			// Add currently monitored PRs as completions for off/check
 			for (const key of monitors.keys()) {
 				completions.push(key);
@@ -787,6 +793,19 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 		handler: async (args, ctx) => {
 			uiCtx = ctx.ui;
 			const raw = args.trim();
+
+			// Parse: ! or start — auto-detect current branch's PR and start
+			// Parse: ! or start — inject a prompt so the LLM sees the user wants
+			// to monitor the current PR. The LLM will determine which PR and
+			// invoke the ghpr-monitor tool itself. This triggers an agent turn.
+			if (raw === "!" || raw.toLowerCase() === "start") {
+				if (NO_AGENT) {
+					ctx.ui.notify("Monitor the current pull request using ghpr-monitor.", "info");
+				} else {
+					pi.sendUserMessage("Monitor the current pull request using ghpr-monitor.", { deliverAs: "steer" });
+				}
+				return;
+			}
 
 			// Parse: off [PR identifier]
 			if (raw.toLowerCase().startsWith("off") || raw.toLowerCase().startsWith("stop")) {
@@ -813,7 +832,7 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 			// trigger a new agent turn — similar to !command behavior.
 			if (raw.toLowerCase() === "status") {
 				if (monitors.size === 0) {
-					ctx.ui.notify("No PR monitors running.\n  Start one with: /ghpr-monitor <PR URL>\n  Shorthand: /ghpr-monitor owner/repo#123", "info");
+					ctx.ui.notify("No PR monitors running.\n  Start one with: /ghpr-monitor ! (current branch) or /ghpr-monitor <PR URL>", "info");
 					return;
 				}
 				const conciseStatus = formatCurrentStatus();
@@ -878,7 +897,7 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 				}
 				// No monitors running — show usage hint via UI only (no agent turn)
 				ctx.ui.notify(
-					"No PR monitors running.\n  Start one with: /ghpr-monitor <PR URL>\n  Shorthand: /ghpr-monitor owner/repo#123",
+					"No PR monitors running.\n  Start one with: /ghpr-monitor ! (current branch) or /ghpr-monitor <PR URL>",
 					"info",
 				);
 				return;
@@ -966,7 +985,7 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 			}
 
 			ctx.ui.notify(
-				"Usage:\n  /ghpr-monitor <PR URL> [message] — paste a GH PR URL\n  /ghpr-monitor owner/repo#123\n  /ghpr-monitor owner/repo <pr-number> [message]\n  /ghpr-monitor check [PR] — check now (all or specific)\n  /ghpr-monitor off [PR] — stop monitoring (all or specific)",
+				"Usage:\n  /ghpr-monitor ! | start — monitor current branch's PR (injects prompt for LLM)\n  /ghpr-monitor <PR URL> — paste a GH PR URL (TUI-only, no LLM turn)\n  /ghpr-monitor owner/repo#123\n  /ghpr-monitor owner/repo <pr-number> [message]\n  /ghpr-monitor check [PR] — check now (all or specific)\n  /ghpr-monitor off [PR] — stop monitoring (all or specific)",
 				"info",
 			);
 		},

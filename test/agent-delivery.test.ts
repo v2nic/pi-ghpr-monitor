@@ -259,11 +259,12 @@ describe("No rogue pi.sendUserMessage() calls bypass sendPRNotification", () => 
 			// Check if it's inside sendPRNotification
 			const insideSendPR = idx >= fnStart && idx <= fnEnd;
 
-			// Check if it's a steering prompt message
+			// Check if it's the !/start subcommand steer prompt
 			const nearby = src.slice(Math.max(0, idx - 300), idx + 300);
-			const isSteerPrompt =
-				nearby.includes("steerMessage") ||
-				nearby.includes("The user wants to start");
+			const isStartSubcommandPrompt = nearby.includes("Monitor the current pull request");
+
+			// Check if it's a steering prompt message (user-provided message after PR URL)
+			const isSteerPrompt = nearby.includes("steerMessage");
 
 			// Check if it's in a comment
 			const lineStart = src.lastIndexOf("\n", idx) + 1;
@@ -271,8 +272,8 @@ describe("No rogue pi.sendUserMessage() calls bypass sendPRNotification", () => 
 			const isComment = lineText.startsWith("//") || lineText.startsWith("*");
 
 			expect(
-				insideSendPR || isSteerPrompt || isComment,
-				`pi.sendUserMessage() at index ${idx} should be inside sendPRNotification() or a steering prompt`
+				insideSendPR || isStartSubcommandPrompt || isSteerPrompt || isComment,
+				`pi.sendUserMessage() at index ${idx} should be inside sendPRNotification(), the !/start prompt, or a steering prompt`
 			).toBe(true);
 		}
 	});
