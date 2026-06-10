@@ -10,9 +10,8 @@
  *
  * Starting a monitor with an explicit PR URL (/ghpr-monitor <URL>) is TUI-only:
  * it shows a notification confirming the monitor started but does NOT trigger an
- * agent turn. The /ghpr-monitor ! or /ghpr-monitor start subcommand auto-detects
- * the current branch's PR, starts monitoring, AND injects a steering prompt so
- * the LLM sees it and will actively respond to notifications.
+ * agent turn. The /ghpr-monitor ! or /ghpr-monitor start subcommand injects a
+ * steering prompt so the LLM will find the current PR and start monitoring it.
  *
  * Multiple PRs can be monitored simultaneously — each runs its own
  * independent poll loop with its own state (backoff, status, reminders).
@@ -194,29 +193,6 @@ async function fetchPRData(config: MonitorConfig, signal?: AbortSignal, mockBase
 }
 
 // ---------------------------------------------------------------------------
-// Current branch PR detection
-// ---------------------------------------------------------------------------
-
-/**
- * Detect the PR for the current git branch using `gh pr view`.
- * Returns parsed PR info or null if no PR is associated with the current branch.
- */
-async function detectCurrentPR(): Promise<ParsedPR | null> {
-	try {
-		const result = await runGh(["pr", "view", "--json", "url"]);
-		if (result.exitCode !== 0 || !result.stdout.trim()) {
-			return null;
-		}
-		const data = JSON.parse(result.stdout);
-		if (!data.url) {
-			return null;
-		}
-		return parsePRUrl(data.url);
-	} catch {
-		return null;
-	}
-}
-
 // ---------------------------------------------------------------------------
 // PR URL parser
 // ---------------------------------------------------------------------------
@@ -536,24 +512,6 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 		return `Stopped monitoring ${keys.length} PR(s): ${keys.join(", ")}`;
 	}
 
-	/**
-	 * Send a steering prompt to the LLM when monitoring is started via
-	 * /ghpr-monitor ! or /ghpr-monitor start, so the agent knows the user
-	 * requested monitoring this PR and will actively respond to notifications.
-	 *
-	 * This is NOT called when monitoring is started with an explicit PR URL
-	 * (which is TUI-only, no LLM turn). It IS called for the !/start
-	 * subcommands because those auto-detect the current branch's PR and
-	 * the user wants the LLM to be aware and take action.
-	 */
-	function sendStartPrompt(config: MonitorConfig) {
-		if (NO_AGENT) return;
-		const prLabel = `${config.owner}/${config.repo}#${config.number}`;
-		const prUrl = `https://${config.host}/${config.owner}/${config.repo}/pull/${config.number}`;
-		const startPrompt = `The user requested monitoring PR ${prLabel} (${prUrl}). Watch for PR status updates and take action on any issues found: resolve review threads, fix CI failures, and address merge conflicts. Respond to each notification promptly.`;
-		pi.sendUserMessage(startPrompt, { deliverAs: "steer" });
-	}
-
 	function updateFooter() {
 		if (!uiCtx) return;
 		if (monitors.size === 0) {
@@ -804,29 +762,14 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 			const raw = args.trim();
 
 			// Parse: ! or start — auto-detect current branch's PR and start
-			// monitoring with a steer prompt so the LLM sees it. This triggers
-			// an agent turn so the LLM will actively respond to notifications.
+			// Parse: ! or start — inject a prompt so the LLM sees the user wants
+			// to monitor the current PR. The LLM will determine which PR and
+			// invoke the ghpr-monitor tool itself. This triggers an agent turn.
 			if (raw === "!" || raw.toLowerCase() === "start") {
-				const pr = await detectCurrentPR();
-				if (!pr) {
-					ctx.ui.notify("No PR found for the current branch. Create one with: gh pr create --draft", "warning");
-					return;
-				}
-				const config: MonitorConfig = {
-					owner: pr.owner,
-					repo: pr.repo,
-					number: pr.number,
-					host: pr.host,
-					mode: "all",
-					intervalSec: MOCK_INTERVAL_SECS ? Math.max(1, MOCK_INTERVAL_SECS) : 60,
-					debounceSec: 30,
-				};
-				const result = startMonitor(config);
-				if (result.alreadyMonitoring) {
-					ctx.ui.notify(result.message, "warning");
+				if (NO_AGENT) {
+					ctx.ui.notify("Monitor the current pull request using ghpr-monitor.", "info");
 				} else {
-					ctx.ui.notify(result.message, "success");
-					sendStartPrompt(config);
+					pi.sendUserMessage("Monitor the current pull request using ghpr-monitor.", { deliverAs: "steer" });
 				}
 				return;
 			}
