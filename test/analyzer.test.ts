@@ -663,8 +663,8 @@ describe("formatStatusUpdate with detail", () => {
 			lastCommentBySelf: false,
 			lastCommitOid: "",
 			threadDetails: [
-				{ id: "PRRT_1", threadDatabaseId: 201, isResolved: false, lastCommentAuthor: "reviewer", lastCommentBody: "Please fix this typo" },
-				{ id: "PRRT_2", threadDatabaseId: 202, isResolved: false, lastCommentAuthor: "bot", lastCommentBody: "Build failed" },
+				{ id: "PRRT_1", databaseId: 201, isResolved: false, lastCommentAuthor: "reviewer", lastCommentBody: "Please fix this typo" },
+				{ id: "PRRT_2", databaseId: 202, isResolved: false, lastCommentAuthor: "bot", lastCommentBody: "Build failed" },
 			],
 			commentDetails: [],
 			checkDetails: [],
@@ -1206,7 +1206,7 @@ describe("snapshotPR extracts lastCommitOid", () => {
 });
 
 describe("snapshotPR maps databaseId from GraphQL", () => {
-	it("maps thread databaseId to ThreadSummary.threadDatabaseId", () => {
+	it("maps thread databaseId to ThreadSummary.databaseId", () => {
 		const pr = makeMockPR({
 			reviewThreads: {
 				nodes: [
@@ -1233,7 +1233,7 @@ describe("snapshotPR maps databaseId from GraphQL", () => {
 			},
 		});
 		const status = snapshotPR(pr);
-		expect(status.threadDetails[0].threadDatabaseId).toBe(98765);
+		expect(status.threadDetails[0].databaseId).toBe(98765);
 	});
 
 	it("maps comment databaseId to CommentSummary.databaseId for review comments", () => {
@@ -1290,7 +1290,7 @@ describe("formatThreadDetailBlock includes databaseId", () => {
 	it("includes thread databaseId in header", () => {
 		const thread: ThreadSummary = {
 			id: "PRRT_abc",
-			threadDatabaseId: 98765,
+			databaseId: 98765,
 			isResolved: false,
 			lastCommentAuthor: "reviewer",
 			lastCommentBody: "Fix this",
@@ -1380,7 +1380,7 @@ describe("formatThreadDetails concise includes databaseId", () => {
 			lastCommentBySelf: false,
 			lastCommitOid: "",
 			threadDetails: [
-				{ id: "PRRT_abc", threadDatabaseId: 98765, isResolved: false, lastCommentAuthor: "reviewer", lastCommentBody: "Fix this" },
+				{ id: "PRRT_abc", databaseId: 98765, isResolved: false, lastCommentAuthor: "reviewer", lastCommentBody: "Fix this" },
 			],
 			commentDetails: [],
 			checkDetails: [],

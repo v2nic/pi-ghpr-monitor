@@ -1801,7 +1801,7 @@ describe("First-poll overlap: no duplicate content from status update + reminder
 		failingChecks: ["ci/test"], pendingChecks: [],
 		lastCommentTimestamp: "", lastCommentBySelf: false,
 			lastCommitOid: "",
-		threadDetails: [{ id: "PRRT_1", threadDatabaseId: 1, isResolved: false, lastCommentAuthor: "reviewer", lastCommentBody: "fix this" }],
+		threadDetails: [{ id: "PRRT_1", databaseId: 1, isResolved: false, lastCommentAuthor: "reviewer", lastCommentBody: "fix this" }],
 		commentDetails: [{ id: "C_1", databaseId: 1, author: "reviewer", body: "general comment" }],
 		checkDetails: [{ name: "ci/test", conclusion: "FAILURE" }],
 	};

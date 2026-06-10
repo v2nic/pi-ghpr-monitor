@@ -88,7 +88,7 @@ export interface PullRequestData {
 
 export interface ThreadSummary {
 	id: string;
-	threadDatabaseId: number;
+	databaseId: number;
 	isResolved: boolean;
 	lastCommentAuthor: string;
 	lastCommentBody: string;
@@ -283,7 +283,7 @@ export function snapshotPR(pr: PullRequestData): PRStatus {
 			const first = comments[0];
 			return {
 				id: t.id,
-				threadDatabaseId: t.databaseId,
+				databaseId: t.databaseId,
 				isResolved: t.isResolved,
 				lastCommentAuthor: last?.author?.login ?? "",
 				lastCommentBody: firstLine(last?.body, 120),
@@ -503,7 +503,7 @@ function formatThreadDetails(threads: ThreadSummary[], prev?: ThreadSummary[]): 
 	const prevIds = new Set((prev ?? []).map(t => t.id));
 	return threads
 		.filter(t => !prevIds.has(t.id) || !prev) // show new threads only (or all if no prev)
-		.map(t => `  - [${t.lastCommentAuthor}] ${firstLine(t.lastCommentBody, 120)} (id: ${t.id}, databaseId: ${t.threadDatabaseId})`)
+		.map(t => `  - [${t.lastCommentAuthor}] ${firstLine(t.lastCommentBody, 120)} (id: ${t.id}, databaseId: ${t.databaseId})`)
 		.join("\n");
 }
 
@@ -707,8 +707,8 @@ function formatThreadDetailBlock(thread: ThreadSummary): string {
 		: undefined;
 
 	const header = location
-		? `Thread ${thread.id} (databaseId: ${thread.threadDatabaseId}) (${location})`
-		: `Thread ${thread.id} (databaseId: ${thread.threadDatabaseId})`;
+		? `Thread ${thread.id} (databaseId: ${thread.databaseId}) (${location})`
+		: `Thread ${thread.id} (databaseId: ${thread.databaseId})`;
 	lines.push(header + ":");
 
 	if (thread.allComments && thread.allComments.length > 0) {

@@ -516,7 +516,7 @@ describe("preferences in notification formatting", () => {
 			...cleanStatus,
 			unresolvedThreads: 3,
 			threadDetails: [
-				{ id: "t1", threadDatabaseId: 1, isResolved: false, lastCommentAuthor: "user", lastCommentBody: "fix this" },
+				{ id: "t1", databaseId: 1, isResolved: false, lastCommentAuthor: "user", lastCommentBody: "fix this" },
 			],
 		};
 		const prefs: Preferences = { newComments: "📬 {unresolvedThreads} threads need review on {prLabel}" };
@@ -534,7 +534,7 @@ describe("preferences in notification formatting", () => {
 			generalComments: 1,
 			failingChecks: ["ci/test"],
 			threadDetails: [
-				{ id: "t1", threadDatabaseId: 1, isResolved: false, lastCommentAuthor: "user", lastCommentBody: "fix this" },
+				{ id: "t1", databaseId: 1, isResolved: false, lastCommentAuthor: "user", lastCommentBody: "fix this" },
 			],
 			commentDetails: [
 				{ id: "c1", databaseId: 1, author: "user", body: "comment" },
@@ -607,7 +607,7 @@ describe("preferences in notification formatting", () => {
 			...cleanStatus,
 			unresolvedThreads: 3,
 			threadDetails: [
-				{ id: "t1", threadDatabaseId: 1, isResolved: false, lastCommentAuthor: "user", lastCommentBody: "fix this" },
+				{ id: "t1", databaseId: 1, isResolved: false, lastCommentAuthor: "user", lastCommentBody: "fix this" },
 			],
 		};
 

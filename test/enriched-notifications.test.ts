@@ -276,7 +276,7 @@ describe("formatAgentNotification", () => {
 			threadDetails: [
 				{
 					id: "PRRT_kwDOO45Fys6AY8FC",
-					threadDatabaseId: 5,
+					databaseId: 5,
 					isResolved: false,
 					lastCommentAuthor: "copilot-pull-request-reviewer",
 					lastCommentBody: "PR description says the frontend already has pnpm.onlyBuiltDependencies configured, but frontend/package.json curren…",
@@ -345,7 +345,7 @@ describe("formatAgentNotification", () => {
 			threadDetails: [
 				{
 					id: "PRRT_1",
-					threadDatabaseId: 6,
+					databaseId: 6,
 					isResolved: false,
 					lastCommentAuthor: "dev",
 					lastCommentBody: "Fixed in commit abc123",
@@ -416,7 +416,7 @@ describe("formatAgentNotification", () => {
 			threadDetails: [
 				{
 					id: "PRRT_1",
-					threadDatabaseId: 7,
+					databaseId: 7,
 					isResolved: false,
 					lastCommentAuthor: "reviewer",
 					lastCommentBody: "General review note",
@@ -442,7 +442,7 @@ describe("formatAgentNotification", () => {
 			threadDetails: [
 				{
 					id: "PRRT_1",
-					threadDatabaseId: 8,
+					databaseId: 8,
 					isResolved: false,
 					lastCommentAuthor: "reviewer",
 					lastCommentBody: "File-level comment",
@@ -464,7 +464,7 @@ describe("formatAgentNotification", () => {
 			threadDetails: [
 				{
 					id: "PRRT_1",
-					threadDatabaseId: 9,
+					databaseId: 9,
 					isResolved: false,
 					lastCommentAuthor: "reviewer",
 					lastCommentBody: "Outdated comment",
@@ -486,8 +486,8 @@ describe("formatAgentNotification", () => {
 			hasConflicts: true,
 			failingChecks: ["ci/test"],
 			threadDetails: [
-				{ id: "PRRT_1", threadDatabaseId: 23, isResolved: false, lastCommentAuthor: "a", lastCommentBody: "Fix this" },
-				{ id: "PRRT_2", threadDatabaseId: 24, isResolved: false, lastCommentAuthor: "b", lastCommentBody: "And this" },
+				{ id: "PRRT_1", databaseId: 23, isResolved: false, lastCommentAuthor: "a", lastCommentBody: "Fix this" },
+				{ id: "PRRT_2", databaseId: 24, isResolved: false, lastCommentAuthor: "b", lastCommentBody: "And this" },
 			],
 			checkDetails: [{ name: "ci/test", conclusion: "FAILURE" }],
 		});
@@ -529,15 +529,15 @@ describe("formatAgentStatusUpdate", () => {
 	it("returns concise matching formatStatusUpdate", () => {
 		const prev = makeMockStatus({
 			unresolvedThreads: 1,
-			threadDetails: [{ id: "PRRT_1", threadDatabaseId: 25, isResolved: false, lastCommentAuthor: "a", lastCommentBody: "Fix" }],
+			threadDetails: [{ id: "PRRT_1", databaseId: 25, isResolved: false, lastCommentAuthor: "a", lastCommentBody: "Fix" }],
 			failingChecks: ["ci/test"],
 			checkDetails: [{ name: "ci/test", conclusion: "FAILURE" }],
 		});
 		const curr = makeMockStatus({
 			unresolvedThreads: 2,
 			threadDetails: [
-				{ id: "PRRT_1", threadDatabaseId: 26, isResolved: false, lastCommentAuthor: "a", lastCommentBody: "Fix" },
-				{ id: "PRRT_2", threadDatabaseId: 27, isResolved: false, lastCommentAuthor: "b", lastCommentBody: "Also fix", fullBody: "Also fix this other thing", path: "src/main.ts", line: 10 },
+				{ id: "PRRT_1", databaseId: 26, isResolved: false, lastCommentAuthor: "a", lastCommentBody: "Fix" },
+				{ id: "PRRT_2", databaseId: 27, isResolved: false, lastCommentAuthor: "b", lastCommentBody: "Also fix", fullBody: "Also fix this other thing", path: "src/main.ts", line: 10 },
 			],
 			failingChecks: ["ci/test"],
 			checkDetails: [{ name: "ci/test", conclusion: "FAILURE" }],
@@ -550,15 +550,15 @@ describe("formatAgentStatusUpdate", () => {
 	it("includes thread details for new threads in detailed output", () => {
 		const prev = makeMockStatus({
 			unresolvedThreads: 1,
-			threadDetails: [{ id: "PRRT_1", threadDatabaseId: 28, isResolved: false, lastCommentAuthor: "a", lastCommentBody: "Old thread" }],
+			threadDetails: [{ id: "PRRT_1", databaseId: 28, isResolved: false, lastCommentAuthor: "a", lastCommentBody: "Old thread" }],
 		});
 		const curr = makeMockStatus({
 			unresolvedThreads: 2,
 			threadDetails: [
-				{ id: "PRRT_1", threadDatabaseId: 29, isResolved: false, lastCommentAuthor: "a", lastCommentBody: "Old thread" },
+				{ id: "PRRT_1", databaseId: 29, isResolved: false, lastCommentAuthor: "a", lastCommentBody: "Old thread" },
 				{
 					id: "PRRT_2",
-					threadDatabaseId: 10,
+					databaseId: 10,
 					isResolved: false,
 					lastCommentAuthor: "reviewer",
 					lastCommentBody: "New thread",
@@ -628,7 +628,7 @@ describe("formatAgentStatusUpdate", () => {
 			threadDetails: [
 				{
 					id: "PRRT_1",
-					threadDatabaseId: 11,
+					databaseId: 11,
 					isResolved: false,
 					lastCommentAuthor: "a",
 					lastCommentBody: "Fix",
@@ -662,7 +662,7 @@ describe("real-world session: copilot review comment", () => {
 			threadDetails: [
 				{
 					id: "PRRT_kwDOO45Fys6AY8FC",
-					threadDatabaseId: 12,
+					databaseId: 12,
 					isResolved: false,
 					lastCommentAuthor: "copilot-pull-request-reviewer",
 					lastCommentBody: "PR description says the frontend already has pnpm.onlyBuiltDependencies configured, but frontend/package.json curren…",
@@ -725,7 +725,7 @@ describe("consise is always a proper prefix/subset of detailed", () => {
 			threadDetails: [
 				{
 					id: "PRRT_1",
-					threadDatabaseId: 13,
+					databaseId: 13,
 					isResolved: false,
 					lastCommentAuthor: "reviewer",
 					lastCommentBody: "Short",
@@ -773,7 +773,7 @@ describe("edge cases for enriched notifications", () => {
 			threadDetails: [
 				{
 					id: "PRRT_1",
-					threadDatabaseId: 14,
+					databaseId: 14,
 					isResolved: false,
 					lastCommentAuthor: "reviewer",
 					lastCommentBody: "Fix this",
@@ -817,7 +817,7 @@ describe("edge cases for enriched notifications", () => {
 			threadDetails: [
 				{
 					id: "PRRT_1",
-					threadDatabaseId: 15,
+					databaseId: 15,
 					isResolved: false,
 					lastCommentAuthor: "a",
 					lastCommentBody: "Code comment",
@@ -830,7 +830,7 @@ describe("edge cases for enriched notifications", () => {
 				},
 				{
 					id: "PRRT_2",
-					threadDatabaseId: 16,
+					databaseId: 16,
 					isResolved: false,
 					lastCommentAuthor: "b",
 					lastCommentBody: "General comment",
