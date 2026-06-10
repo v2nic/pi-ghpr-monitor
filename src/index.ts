@@ -1164,7 +1164,7 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 
 				case "preferences": {
 					if (params.value !== undefined && params.value !== "") {
-						// Write preferences
+						// Write preferences — merge with current to avoid dropping other keys
 						const result = validatePreferences(params.value);
 						if (!result.ok) {
 							return {
@@ -1172,32 +1172,59 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 								details: { action: "preferences", status: "validation_error", errors: result.errors },
 							};
 						}
-						const newPrefs = result.preferences!;
-						savePreferences(newPrefs);
-						currentPreferences = newPrefs;
-						log(`Preferences updated: ${JSON.stringify(newPrefs)}`);
+						const validated = result.preferences!;
+						// Merge: validated keys override current; reset keys are removed
+						const merged = { ...currentPreferences, ...validated };
+						for (const key of result.resetKeys ?? []) {
+							delete merged[key];
+						}
+						savePreferences(merged);
+						currentPreferences = merged;
+						log(`Preferences updated: ${JSON.stringify(merged)}`);
 
 						// Show effective preferences (defaults merged with overrides)
-						const effective = getEffectivePreferences(newPrefs);
+						const effective = getEffectivePreferences(merged);
 						const lines: string[] = [];
-						for (const key of Object.keys(DEFAULT_PREFERENCES) as (keyof Preferences)[]) {
-							const isCustom = newPrefs[key] !== undefined && newPrefs[key] !== "";
-							lines.push(`  ${key}: ${effective[key]}${isCustom ? "" : " (default)"}`);
+						for (const key of Object.keys(PreferencesSchema.properties) as (keyof Preferences)[]) {
+							const isCustom = merged[key] !== undefined && merged[key] !== "";
+							const defaultValue = DEFAULT_PREFERENCES[key];
+							if (isCustom) {
+								lines.push(`  ${key}: ${effective[key]} (custom)`);
+							} else if (defaultValue !== undefined) {
+								lines.push(`  ${key}: ${defaultValue} (default)`);
+							} else {
+								lines.push(`  ${key}: (computed)`);
+							}
 						}
 						const prefsDisplay = lines.join("\n");
 						return {
-							content: [{ type: "text", text: `Preferences saved to ${getPreferencesPath()}:\n${JSON.stringify(newPrefs, null, 2)}\n\nEffective values:\n${prefsDisplay}\n\nSet a key to null to reset it to default, e.g. {"conflict": null}` }],
-							details: { action: "preferences", status: "saved", preferences: newPrefs },
+							content: [{ type: "text", text: `Preferences saved to ${getPreferencesPath()}:\n${JSON.stringify(merged, null, 2)}\n\nEffective values:\n${prefsDisplay}\n\nSet a key to null to reset it to default, e.g. {"conflict": null}` }],
+							details: { action: "preferences", status: "saved", preferences: merged },
 						};
 					}
 
 					// Read preferences — show all keys with their effective values
 					const effective = getEffectivePreferences(currentPreferences);
 					const lines: string[] = [];
-					for (const key of Object.keys(DEFAULT_PREFERENCES) as (keyof Preferences)[]) {
+					for (const key of Object.keys(PreferencesSchema.properties) as (keyof Preferences)[]) {
 						const isCustom = currentPreferences[key] !== undefined && currentPreferences[key] !== "";
-						lines.push(`  ${key}: ${effective[key]}${isCustom ? " (custom)" : " (default)"}`);
+						const defaultValue = DEFAULT_PREFERENCES[key];
+						if (isCustom) {
+							lines.push(`  ${key}: ${effective[key]} (custom)`);
+						} else if (defaultValue !== undefined) {
+							lines.push(`  ${key}: ${defaultValue} (default)`);
+						} else {
+							lines.push(`  ${key}: (computed)`);
+						}
 					}
+					const prefsDisplay = lines.join("\n");
+					const availableKeys = Object.keys(PreferencesSchema.properties).join(", ");
+					const helpText = `Current preferences:\n${prefsDisplay}\n\nAvailable keys: ${availableKeys}\nTemplate variables: {owner}, {repo}, {number}, {host}, {prLabel}, {unresolvedThreads}, {generalComments}, {failingChecks}, {conflict}\n\nSet a key to null to reset it to default, e.g. ghpr-monitor(action='preferences', value='{"conflict": null}')`;
+					return {
+						content: [{ type: "text", text: helpText }],
+						details: { action: "preferences", status: "read", preferences: currentPreferences },
+					};
+				}					}
 					const prefsDisplay = lines.join("\n");
 					const availableKeys = Object.keys(PreferencesSchema.properties).join(", ");
 					const helpText = `Current preferences:\n${prefsDisplay}\n\nAvailable keys: ${availableKeys}\nTemplate variables: {owner}, {repo}, {number}, {host}, {prLabel}, {unresolvedThreads}, {generalComments}, {failingChecks}, {conflict}\n\nSet a key to null to reset it to default, e.g. ghpr-monitor(action='preferences', value='{"conflict": null}')`;

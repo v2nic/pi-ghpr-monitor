@@ -342,6 +342,29 @@ describe("loadPreferences / savePreferences", () => {
 		const loaded = loadPreferences();
 		expect(loaded.conflict).toBeUndefined();
 	});
+
+	it("merge: null reset preserves other custom preferences", () => {
+		// This simulates the merge logic in index.ts:
+		//   const merged = { ...currentPreferences, ...validated };
+		//   for (const key of result.resetKeys ?? []) delete merged[key];
+		const current: Preferences = { conflict: "Custom {prLabel}!", ciFailure: "CI: {failingChecks}" };
+
+		// Validate a null reset for conflict only
+		const result = validatePreferences('{"conflict": null}');
+		expect(result.ok).toBe(true);
+		expect(result.resetKeys).toContain("conflict");
+
+		// Merge: current + validated, then remove reset keys
+		const merged = { ...current, ...result.preferences! };
+		for (const key of result.resetKeys ?? []) {
+			delete merged[key];
+		}
+
+		// conflict should be gone (was reset)
+		expect(merged.conflict).toBeUndefined();
+		// ciFailure should be preserved from current
+		expect(merged.ciFailure).toBe("CI: {failingChecks}");
+	});
 });
 
 // ---------------------------------------------------------------------------
@@ -359,10 +382,16 @@ describe("DEFAULT_PREFERENCES", () => {
 		expect(DEFAULT_PREFERENCES).toHaveProperty("firstPoll");
 	});
 
-	it("each default contains template variables", () => {
+	it("non-undefined defaults contain template variables", () => {
 		for (const [key, value] of Object.entries(DEFAULT_PREFERENCES)) {
-			expect(value).toMatch(/\{\w+\}/);
+			if (value !== undefined) {
+				expect(value).toMatch(/\{\w+\}/);
+			}
 		}
+	});
+
+	it("reminder has a computed default (undefined)", () => {
+		expect(DEFAULT_PREFERENCES.reminder).toBeUndefined();
 	});
 
 	it("allClear default matches the hardcoded message", () => {
@@ -379,11 +408,16 @@ describe("DEFAULT_PREFERENCES", () => {
 });
 
 describe("getEffectivePreferences", () => {
-	it("returns all defaults when no overrides are set", () => {
+	it("returns static defaults when no overrides are set", () => {
 		const effective = getEffectivePreferences({});
-		for (const [key, defaultValue] of Object.entries(DEFAULT_PREFERENCES)) {
-			expect(effective[key as keyof Preferences]).toBe(defaultValue);
-		}
+		// Keys with static defaults should be present
+		expect(effective.conflict).toBe(DEFAULT_PREFERENCES.conflict);
+		expect(effective.allClear).toBe(DEFAULT_PREFERENCES.allClear);
+		expect(effective.ciFailure).toBe(DEFAULT_PREFERENCES.ciFailure);
+		expect(effective.newComments).toBe(DEFAULT_PREFERENCES.newComments);
+		expect(effective.firstPoll).toBe(DEFAULT_PREFERENCES.firstPoll);
+		// reminder has no static default (computed at runtime)
+		expect(effective.reminder).toBeUndefined();
 	});
 
 	it("overrides defaults with custom preferences", () => {
@@ -406,6 +440,17 @@ describe("getEffectivePreferences", () => {
 		expect(effective.ciFailure).toBe("💥 CI failed: {failingChecks}");
 		expect(effective.conflict).toBe(DEFAULT_PREFERENCES.conflict);
 		expect(effective.allClear).toBe(DEFAULT_PREFERENCES.allClear);
+	});
+
+	it("includes custom reminder preference", () => {
+		const prefs: Preferences = { reminder: "⏰ {prLabel} needs attention" };
+		const effective = getEffectivePreferences(prefs);
+		expect(effective.reminder).toBe("⏰ {prLabel} needs attention");
+	});
+
+	it("omits reminder when no override is set (computed default)", () => {
+		const effective = getEffectivePreferences({});
+		expect(effective.reminder).toBeUndefined();
 	});
 });
 
