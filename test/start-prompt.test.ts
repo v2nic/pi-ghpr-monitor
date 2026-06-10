@@ -28,7 +28,6 @@ describe("start prompt injection on monitor start", () => {
 	it("sendStartPrompt uses pi.sendUserMessage with deliverAs steer", () => {
 		const fnStart = src.indexOf("function sendStartPrompt(config: MonitorConfig)");
 		expect(fnStart).toBeGreaterThan(-1);
-		const fnEnd = src.indexOf("}", fnStart + 1);
 		// Find the closing brace of the function (may have nested braces)
 		let depth = 0;
 		let fnBodyEnd = fnStart;
