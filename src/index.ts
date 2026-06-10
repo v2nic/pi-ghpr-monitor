@@ -283,9 +283,10 @@ function createActiveMonitor(config: MonitorConfig): ActiveMonitor {
 export default function ghprMonitorExtension(pi: ExtensionAPI) {
 	const monitors: Map<string, ActiveMonitor> = new Map();
 	let agentTurnActive = false;
-	let queuedUpdate: { concise: string; detailed: string; host: string } | null = null;
-	let queuedForceChecks: Array<{ concise: string; detailed: string; host: string }> = [];
-	let lastSentUpdate: string | null = null;
+	let queuedUpdate: { concise: string; detailed: string; host: string; monitorKey: string } | null = null;
+	let queuedForceChecks: Array<{ concise: string; detailed: string; host: string; monitorKey: string }> = [];
+	// NOTE: Deduplication is per-monitor (mon.lastSentUpdate). No global lastSentUpdate
+	// to prevent cross-monitor dedup suppression. See issue #25.
 	let uiCtx: ExtensionUIContext | undefined;
 	const MAX_BACKOFF_SEC = 300; // 5 minutes max rate-limit backoff
 	const MAX_IDLE_SEC = 300; // 5 minutes max idle polling
@@ -407,7 +408,11 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 			const update = queuedUpdate;
 			queuedUpdate = null;
 			sendPRNotification(update.concise, update.detailed, {deliverAs: "steer", host: update.host});
-			lastSentUpdate = update.concise;
+			// Only update lastSentUpdate for the monitor that originated the queued update
+			const originatingMon = monitors.get(update.monitorKey);
+			if (originatingMon) {
+				originatingMon.lastSentUpdate = update.concise;
+			}
 			// Mark all monitors that their reminders are superseded
 			for (const mon of monitors.values()) {
 				mon.lastSentReminder = null;
@@ -594,12 +599,11 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 				if (update) {
 					if (agentTurnActive) {
 						// Don't spam the LLM while it's working - queue for later
-						queuedUpdate = { concise: update, detailed: update, host: config.host };
-					} else if (update !== lastSentUpdate) {
+						queuedUpdate = { concise: update, detailed: update, host: config.host, monitorKey: prKey(config) };
+					} else if (update !== mon.lastSentUpdate) {
 						// Only send if something changed since last update
 						const { concise: concUpdate, detailed: detUpdate } = formatAgentStatusUpdate(mon.lastStatus, curr, config, currentPreferences); sendPRNotification(concUpdate, detUpdate, {deliverAs: "steer", host: config.host});
-						lastSentUpdate = update;
-						mon.lastSentUpdate = update;
+							mon.lastSentUpdate = update;
 						mon.lastSentReminder = null; // real update supersedes any prior reminder
 						mon.lastNudgeTime = Date.now();
 						updateSentThisCycle = true;
@@ -628,7 +632,7 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 					const msg = items ?? `\u2705 No issues found on ${prLabel}`;
 					const detMsg = detItems?.detailed ?? `\u2705 No issues found on ${prLabel}`;
 					if (agentTurnActive) {
-						queuedForceChecks.push({ concise: msg, detailed: detMsg, host: config.host });
+						queuedForceChecks.push({ concise: msg, detailed: detMsg, host: config.host, monitorKey: prKey(config) });
 					} else {
 						sendPRNotification(msg, detMsg, {deliverAs: "steer", host: config.host});
 					}
