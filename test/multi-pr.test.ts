@@ -648,6 +648,32 @@ describe("Description staleness nudge architecture", () => {
 		// Only fires once per commit OID change
 		expect(src).toContain("mon.knownCommitOid = curr.lastCommitOid");
 	});
+
+	it("includes commit URL and short OID in default staleness message", () => {
+		// The default message should embed a commit URL so linkifyPRRefs can
+		// turn it into a clickable hyperlink whose visible text is the short SHA.
+		expect(src).toContain("commitShortOid");
+		expect(src).toContain("commitUrl");
+		expect(src).toContain("commit/${commitOid}");
+		// The default message must reference the commitUrl so it gets linkified.
+		expect(src).toMatch(/New commit \$\{commitUrl\} pushed to/);
+	});
+
+	it("derives commitShortOid from the first 7 characters of lastCommitOid", () => {
+		expect(src).toContain("commitOid.slice(0, 7)");
+	});
+
+	it("passes commit template variables to getPreferenceWithDefault", () => {
+		// Custom descriptionStaleness templates should be able to reference
+		// {commitOid}, {commitShortOid}, and {commitUrl}.
+		const stalenessBlock = src.slice(
+			src.indexOf("Description staleness nudge"),
+			src.indexOf("Description staleness nudge") + 2500,
+		);
+		expect(stalenessBlock).toContain("commitOid,");
+		expect(stalenessBlock).toContain("commitShortOid,");
+		expect(stalenessBlock).toContain("commitUrl,");
+	});
 });
 
 // ---------------------------------------------------------------------------

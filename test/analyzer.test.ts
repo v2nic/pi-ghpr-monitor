@@ -1143,6 +1143,62 @@ describe("linkifyPRRefs", () => {
 			`Check ${linkify("https://github.corp.com/owner/repo/pull/42", "owner/repo#42")} and ${linkify("https://github.corp.com/other/repo/pull/99", "https://github.corp.com/other/repo/pull/99")}`,
 		);
 	});
+
+	// -------------------------------------------------------------------
+	// Commit URL linkification
+	// -------------------------------------------------------------------
+
+	it("linkifies commit URLs with the short 7-char SHA as display text", () => {
+		const sha = "abc1234567890def1234567890abcdef12345678";
+		const input = `\u{1F4DD} New commit https://github.com/v2nic/pi-ghpr-monitor/commit/${sha} pushed to v2nic/pi-ghpr-monitor#42`;
+		const result = linkifyPRRefs(input);
+		expect(result).toBe(
+			`\u{1F4DD} New commit ${linkify(`https://github.com/v2nic/pi-ghpr-monitor/commit/${sha}`, "abc1234")} pushed to ${linkify("https://github.com/v2nic/pi-ghpr-monitor/pull/42", "v2nic/pi-ghpr-monitor#42")}`,
+		);
+	});
+
+	it("linkifies commit URLs with already-short 7-char SHA", () => {
+		const input = "see https://github.com/owner/repo/commit/abc1234";
+		const result = linkifyPRRefs(input);
+		expect(result).toBe(
+			`see ${linkify("https://github.com/owner/repo/commit/abc1234", "abc1234")}`,
+		);
+	});
+
+	it("linkifies commit URLs on GitHub Enterprise hosts", () => {
+		const sha = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef";
+		const input = `Pushed https://github.corp.com/owner/repo/commit/${sha}`;
+		const result = linkifyPRRefs(input);
+		expect(result).toBe(
+			`Pushed ${linkify(`https://github.corp.com/owner/repo/commit/${sha}`, "deadbee")}`,
+		);
+	});
+
+	it("does not capture trailing punctuation in commit URLs", () => {
+		const sha = "abc1234567890";
+		const input = `Pushed https://github.com/owner/repo/commit/${sha}.`;
+		const result = linkifyPRRefs(input);
+		expect(result).toBe(
+			`Pushed ${linkify(`https://github.com/owner/repo/commit/${sha}`, "abc1234")}.`,
+		);
+	});
+
+	it("is idempotent for commit URLs", () => {
+		const sha = "abc1234567890";
+		const input = `Pushed https://github.com/owner/repo/commit/${sha}`;
+		const first = linkifyPRRefs(input);
+		const second = linkifyPRRefs(first);
+		expect(second).toBe(first);
+	});
+
+	it("linkifies commit URL alongside PR refs in the same message", () => {
+		const sha = "abc1234567890";
+		const input = `\u{1F4DD} New commit https://github.com/v2nic/repo/commit/${sha} pushed to v2nic/repo#7. Review the PR description.`;
+		const result = linkifyPRRefs(input);
+		expect(result).toBe(
+			`\u{1F4DD} New commit ${linkify(`https://github.com/v2nic/repo/commit/${sha}`, "abc1234")} pushed to ${linkify("https://github.com/v2nic/repo/pull/7", "v2nic/repo#7")}. Review the PR description.`,
+		);
+	});
 });
 
 describe("snapshotPR extracts lastCommitOid", () => {

@@ -606,12 +606,14 @@ export function formatActionableItems(status: PRStatus, config: MonitorConfig, p
 }
 
 /**
- * Replace PR references (owner/repo#number) and full PR URLs with
- * OSC 8 hyperlinks so they are clickable in the terminal.
+ * Replace PR references (owner/repo#number), full PR URLs, and commit
+ * URLs with OSC 8 hyperlinks so they are clickable in the terminal.
  *
- * Two patterns are linkified:
+ * Three patterns are linkified:
  * 1. `https://host/owner/repo/pull/number` → clickable link (display: URL)
- * 2. `owner/repo#number` → clickable link using defaultHost
+ * 2. `https://host/owner/repo/commit/<sha>` → clickable link
+ *    (display: short 7-char SHA, so the link reads as e.g. `abc1234`)
+ * 3. `owner/repo#number` → clickable link using defaultHost
  *
  * OSC 8 hyperlinks use the format:
  *   \x1b]8;;URL\x1b\\ display_text \x1b]8;;\x1b\\
@@ -652,7 +654,19 @@ export function linkifyPRRefs(text: string, defaultHost: string = "github.com"):
 		return `\x1b]8;;${url}\x1b\\${url}\x1b]8;;\x1b\\`;
 	});
 
-	// Second pass: replace owner/repo#number patterns with OSC 8 hyperlinks.
+	// Second pass: wrap commit URLs in OSC 8 hyperlinks with the short
+	// 7-character SHA as the visible display text. This produces compact
+	// notifications like "📝 New commit abc1234 pushed to ..." where the
+	// short SHA is a clickable hyperlink to the full commit on GitHub.
+	// Matches https://host/owner/repo/commit/<sha> with at least 7 hex chars.
+	const commitUrlPattern = /https?:\/\/([^\/\s]+)\/([^\/\s]+)\/([^\/\s]+)\/commit\/([0-9a-f]{7,40})\b/gi;
+	text = text.replace(commitUrlPattern, (_match, host: string, owner: string, repo: string, sha: string) => {
+		const url = `https://${host}/${owner}/${repo}/commit/${sha}`;
+		const shortSha = sha.slice(0, 7);
+		return `\x1b]8;;${url}\x1b\\${shortSha}\x1b]8;;\x1b\\`;
+	});
+
+	// Third pass: replace owner/repo#number patterns with OSC 8 hyperlinks.
 	// These link to defaultHost (default: github.com).
 	// Word boundary (\b) after the number prevents trailing punctuation
 	// (e.g. "...", ".", ",") from being captured as part of the reference.
