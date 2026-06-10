@@ -299,24 +299,20 @@ describe("Queued update preserves detailed content", () => {
 		const pollBody = extractFunctionBody(src, "pollLoop");
 		expect(pollBody).not.toBeNull();
 
-		// Find the queuedUpdate assignment in the agent-active branch.
-		// It should use `detUpdate` (from formatAgentStatusUpdate) for the
-		// detailed field, not `update` (from formatStatusUpdate).
-		const queuedIdx = pollBody!.indexOf("queuedUpdate = ");
-		expect(queuedIdx).toBeGreaterThan(-1);
+		// Find the queuedUpdate assignment using a whitespace-tolerant regex
+		// so the test doesn't break if the assignment is reformatted across
+		// multiple lines (e.g. by prettier).
+		const queuedAssignMatch = pollBody!.match(/queuedUpdate\s*=\s*\{[^}]+\}/);
+		expect(queuedAssignMatch).not.toBeNull();
 
-		// Get the full assignment line
-		const lineStart = pollBody!.lastIndexOf("\n", queuedIdx) + 1;
-		const lineEnd = pollBody!.indexOf("\n", queuedIdx);
-		const assignLine = pollBody!.slice(lineStart, lineEnd).trim();
-
+		const assignment = queuedAssignMatch![0];
 		// The concise field should use `update` (formatStatusUpdate's return)
 		// and the detailed field should use `detUpdate` (formatAgentStatusUpdate's detailed)
-		expect(assignLine).toContain("concise: update");
-		expect(assignLine).toContain("detailed: detUpdate");
+		expect(assignment).toContain("concise: update");
+		expect(assignment).toContain("detailed: detUpdate");
 
 		// The detailed field should NOT be `update` (which was the bug)
-		expect(assignLine).not.toMatch(/detailed:\s*update[,\s}]/);
+		expect(assignment).not.toMatch(/detailed:\s*update[,\s}]/);
 	});
 
 	it("queuedUpdate does not use identical concise and detailed strings", () => {

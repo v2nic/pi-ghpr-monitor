@@ -28,7 +28,7 @@ import {
 	type MonitorConfig,
 	snapshotPR,
 	formatActionableItems,
-	formatStatusUpdate,
+
 	formatFooterStatus,
 	formatAgentNotification,
 	formatAgentStatusUpdate,
@@ -601,8 +601,7 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 				}
 
 				const curr = snapshotPR(pr);
-				const update = formatStatusUpdate(mon.lastStatus, curr, config, currentPreferences);
-				const { concise: concUpdate, detailed: detUpdate } = formatAgentStatusUpdate(mon.lastStatus, curr, config, currentPreferences);
+				const { concise: update, detailed: detUpdate } = formatAgentStatusUpdate(mon.lastStatus, curr, config, currentPreferences);
 				const hadChange = update.length > 0;
 				let updateSentThisCycle = false;
 
@@ -612,7 +611,7 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 						queuedUpdate = { concise: update, detailed: detUpdate, host: config.host, monitorKey: prKey(config) };
 					} else if (update !== mon.lastSentUpdate) {
 						// Only send if something changed since last update
-						sendPRNotification(concUpdate, detUpdate, {deliverAs: "steer", host: config.host});
+						sendPRNotification(update, detUpdate, {deliverAs: "steer", host: config.host});
 						mon.lastSentUpdate = update;
 						mon.lastSentReminder = null; // real update supersedes any prior reminder
 						mon.lastNudgeTime = Date.now();
