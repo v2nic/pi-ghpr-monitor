@@ -83,6 +83,23 @@ export type Preferences = Static<typeof PreferencesSchema>;
 const ALLOWED_KEYS = new Set(Object.keys(PreferencesSchema.properties));
 
 // ---------------------------------------------------------------------------
+// Default preference templates
+//
+// These are the built-in message templates used when no custom preference
+// is set. They are shown in the preferences display so users know what
+// each key defaults to and can craft overrides that match the style.
+// ---------------------------------------------------------------------------
+
+export const DEFAULT_PREFERENCES: Record<keyof Preferences, string> = {
+	newComments: "💬 {unresolvedThreads} unresolved review thread(s) on {prLabel}",
+	conflict: "⚠️  Merge conflicts detected on {prLabel}",
+	ciFailure: "❌ Failing CI checks on {prLabel}: {failingChecks}",
+	reminder: "⏰ Reminder: {prLabel} needs attention",
+	allClear: "✨ {prLabel} — no issues, all clear",
+	firstPoll: "📡 Monitoring {owner}/{repo}#{number}... (polling every {intervalSec}s)",
+};
+
+// ---------------------------------------------------------------------------
 // Preference file path
 // ---------------------------------------------------------------------------
 
@@ -188,6 +205,10 @@ export interface ValidationResult {
  * nonsensical notifications that get injected into the LLM context as user
  * messages — the agent cannot distinguish a literal "second" from a real
  * user prompt.
+ *
+ * Null values are accepted and mean "reset this key to default".
+ * When a null value is encountered, the key is removed from the preferences
+ * object, causing the default template to be used instead.
  */
 export function validatePreferences(jsonString: string): ValidationResult {
 	let parsed: unknown;
@@ -214,25 +235,38 @@ export function validatePreferences(jsonString: string): ValidationResult {
 		}
 	}
 
+	// Normalize: convert null values to undefined (meaning "reset to default").
+	// Null is not part of the TypeBox schema (Optional[String]), so we strip
+	// nulls before schema validation. After stripping, the key is removed
+	// entirely from the saved preferences, which means the default will be used.
+	if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
+		const parsedObj = parsed as Record<string, unknown>;
+		for (const key of [...Object.keys(parsedObj)]) {
+			if (parsedObj[key] === null) {
+				delete parsedObj[key];
+			}
+		}
+	}
+
 	// Use TypeBox Value.Check for structural validation
 	if (!Value.Check(PreferencesSchema, parsed)) {
 		const errors: string[] = [];
 		if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
 			return {
 				ok: false,
-				errors: ["Preferences must be a JSON object with optional string values."],
+				errors: ["Preferences must be a JSON object with optional string values. Use null to reset a key to default."],
 			};
 		}
 
 		const parsedObj = parsed as Record<string, unknown>;
 		for (const [key, value] of Object.entries(parsedObj)) {
 			if (value !== undefined && typeof value !== "string") {
-				errors.push(`Expected string for '${key}', got ${typeof value}`);
+				errors.push(`Expected string or null for '${key}', got ${typeof value}`);
 			}
 		}
 
 		if (errors.length === 0) {
-			errors.push("Preferences validation failed. Check that all values are strings.");
+			errors.push("Preferences validation failed. Check that all values are strings or null (to reset to default).");
 		}
 
 		return { ok: false, errors };
@@ -242,6 +276,7 @@ export function validatePreferences(jsonString: string): ValidationResult {
 	// Bare strings without template variables are dangerous because they get
 	// injected into the LLM context as user messages, and the agent cannot
 	// distinguish them from real user input.
+	// Empty strings are allowed — they act as "use default".
 	const templatelessKeys: string[] = [];
 	const prefs = parsed as Preferences;
 	for (const [key, value] of Object.entries(prefs)) {
@@ -266,6 +301,26 @@ export function validatePreferences(jsonString: string): ValidationResult {
 		errors: [],
 		preferences: parsed as Preferences,
 	};
+}
+
+// ---------------------------------------------------------------------------
+// Merge preferences with defaults
+// ---------------------------------------------------------------------------
+
+/**
+ * Merge user preferences with defaults, returning the effective value
+ * for each key. Keys not overridden by the user get their default value.
+ * Empty string overrides are treated as "use default" (excluded from result).
+ */
+export function getEffectivePreferences(prefs: Preferences): Record<keyof Preferences, string> {
+	const result = { ...DEFAULT_PREFERENCES };
+	for (const key of Object.keys(DEFAULT_PREFERENCES) as (keyof Preferences)[]) {
+		const override = prefs[key];
+		if (override !== undefined && override !== "") {
+			result[key] = override;
+		}
+	}
+	return result;
 }
 
 // ---------------------------------------------------------------------------
