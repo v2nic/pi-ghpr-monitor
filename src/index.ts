@@ -384,10 +384,10 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 		}
 
 		// Emit a CustomMessage for the registered message renderer.
-		// When a UserMessage is also being sent (delivery is set), use display:false
-		// to avoid a duplicate visible message — the UserMessage already appears in
-		// the TUI. When a UserMessage is also being sent (delivery is set), use display:false
-		// so the CustomMessage is the visible notification.
+		// When a UserMessage is also being sent (delivery is set), display:false
+		// avoids a duplicate visible message — the UserMessage already appears in
+		// the TUI. When no UserMessage is sent (delivery is undefined/null),
+		// display:true makes the CustomMessage the visible notification.
 		pi.sendMessage({
 			customType: "ghpr-monitor",
 			content: linkifiedDetailed,

@@ -191,7 +191,7 @@ export function createMockLLMServer(port: number = 9701): http.Server {
 							seenMessages.push({
 								role: msg.role,
 								content: msg.content,
-								toolCalls: msg.tool_calls,
+								tool_calls: msg.tool_calls,
 							});
 						}
 						const response = buildResponse(messages);
