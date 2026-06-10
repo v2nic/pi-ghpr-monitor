@@ -32,10 +32,12 @@ import {
 import {
 	type Preferences,
 	PreferencesSchema,
+	DEFAULT_PREFERENCES,
 	validatePreferences,
 	loadPreferences,
 	savePreferences,
 	getPreferencesPath,
+	getEffectivePreferences,
 	interpolateTemplate,
 } from "./preferences";
 import { setSessionId, enableDebug, disableDebug, isDebugEnabled, closeLogger, log, logPRSnapshot, logStatus, getLogPath } from "./logger";
@@ -296,7 +298,7 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 	// For testing: allows reducing the polling interval
 	const MOCK_INTERVAL_SECS = process.env.GHPR_MONITOR_INTERVAL_SECS ? parseInt(process.env.GHPR_MONITOR_INTERVAL_SECS, 10) : undefined;
 
-	const STEERING_PROMPT = `You have access to the ghpr-monitor tool. When the user asks you to watch or monitor a PR, use ghpr-monitor with action "start" to begin monitoring. The tool has actions: start, status, check, and preferences. Multiple PRs can be monitored simultaneously. You must NOT stop monitoring on your own — only the user can stop via /ghpr-monitor off (stops all) or /ghpr-monitor off <PR> (stops specific). The user can also run /ghpr-monitor check to trigger an immediate poll (all PRs or a specific one). You will receive PR status updates as notifications. The url parameter accepts GitHub PR URLs or shorthand like "owner/repo#123". Use action='preferences' to view or customize the notification prompts. Calling with no value shows current preferences; providing a value in JSON writes new preferences.`;
+	const STEERING_PROMPT = `You have access to the ghpr-monitor tool. When the user asks you to watch or monitor a PR, use ghpr-monitor with action "start" to begin monitoring. The tool has actions: start, status, check, and preferences. Multiple PRs can be monitored simultaneously. You must NOT stop monitoring on your own — only the user can stop via /ghpr-monitor off (stops all) or /ghpr-monitor off <PR> (stops specific). The user can also run /ghpr-monitor check to trigger an immediate poll (all PRs or a specific one). You will receive PR status updates as notifications. The url parameter accepts GitHub PR URLs or shorthand like "owner/repo#123". Use action='preferences' to view or customize the notification prompts. Calling with no value shows current preferences (with defaults); providing a value in JSON writes new preferences. Set a key to null to reset it to default.`;
 
 	// Register a custom message renderer for "ghpr-monitor" messages.
 	// This renders only the concise summary in the TUI, while the agent
@@ -997,6 +999,7 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 			"Use action='check' to trigger an immediate poll.",
 			"Use action='preferences' to view current preferences or update them with a value parameter.",
 			"The value parameter for preferences is a JSON string with keys: newComments, conflict, ciFailure, reminder, allClear, firstPoll.",
+			"Set a key to null to reset it to default, e.g. {\"conflict\": null}.",
 			"Template variables available in preferences: {owner}, {repo}, {number}, {host}, {prLabel}, plus situation-specific vars like {failingChecks}, {unresolvedThreads}, {generalComments}, {conflict}.",
 			"Do NOT stop monitoring on your own. Only the user can stop monitoring via /ghpr-monitor off.",
 			"Monitoring runs until the user stops it via /ghpr-monitor off, or the PR is merged/closed.",
@@ -1162,7 +1165,7 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 
 				case "preferences": {
 					if (params.value !== undefined && params.value !== "") {
-						// Write preferences
+						// Write preferences — merge with current to avoid dropping other keys
 						const result = validatePreferences(params.value);
 						if (!result.ok) {
 							return {
@@ -1170,31 +1173,59 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 								details: { action: "preferences", status: "validation_error", errors: result.errors },
 							};
 						}
-						const newPrefs = result.preferences!;
-						savePreferences(newPrefs);
-						currentPreferences = newPrefs;
-						log(`Preferences updated: ${JSON.stringify(newPrefs)}`);
+						const validated = result.preferences!;
+						// Merge: validated keys override current; reset keys are removed
+						const merged = { ...currentPreferences, ...validated };
+						for (const key of result.resetKeys ?? []) {
+							delete merged[key];
+						}
+						savePreferences(merged);
+						currentPreferences = merged;
+						log(`Preferences updated: ${JSON.stringify(merged)}`);
+
+						// Show effective preferences (defaults merged with overrides)
+						const effective = getEffectivePreferences(merged);
+						const lines: string[] = [];
+						for (const key of Object.keys(PreferencesSchema.properties) as (keyof Preferences)[]) {
+							const isCustom = merged[key] !== undefined && merged[key] !== "";
+							const defaultValue = DEFAULT_PREFERENCES[key];
+							if (isCustom) {
+								lines.push(`  ${key}: ${effective[key]} (custom)`);
+							} else if (defaultValue !== undefined) {
+								lines.push(`  ${key}: ${defaultValue} (default)`);
+							} else {
+								lines.push(`  ${key}: (computed)`);
+							}
+						}
+						const prefsDisplay = lines.join("\n");
 						return {
-							content: [{ type: "text", text: `Preferences saved to ${getPreferencesPath()}:\n${JSON.stringify(newPrefs, null, 2)}` }],
-							details: { action: "preferences", status: "saved", preferences: newPrefs },
+							content: [{ type: "text", text: `Preferences saved to ${getPreferencesPath()}:\n${JSON.stringify(merged, null, 2)}\n\nEffective values:\n${prefsDisplay}\n\nSet a key to null to reset it to default, e.g. {"conflict": null}` }],
+							details: { action: "preferences", status: "saved", preferences: merged },
 						};
 					}
 
-					// Read preferences
-					const hasPrefs = Object.keys(currentPreferences).length > 0;
-					const prefsDisplay = hasPrefs
-						? JSON.stringify(currentPreferences, null, 2)
-						: "default (no custom preferences set)";
+					// Read preferences — show all keys with their effective values
+					const effective = getEffectivePreferences(currentPreferences);
+					const lines: string[] = [];
+					for (const key of Object.keys(PreferencesSchema.properties) as (keyof Preferences)[]) {
+						const isCustom = currentPreferences[key] !== undefined && currentPreferences[key] !== "";
+						const defaultValue = DEFAULT_PREFERENCES[key];
+						if (isCustom) {
+							lines.push(`  ${key}: ${effective[key]} (custom)`);
+						} else if (defaultValue !== undefined) {
+							lines.push(`  ${key}: ${defaultValue} (default)`);
+						} else {
+							lines.push(`  ${key}: (computed)`);
+						}
+					}
+					const prefsDisplay = lines.join("\n");
 					const availableKeys = Object.keys(PreferencesSchema.properties).join(", ");
-					const helpText = hasPrefs
-						? `Current preferences:\n${prefsDisplay}\n\nAvailable keys: ${availableKeys}\nTemplate variables: {owner}, {repo}, {number}, {host}, {prLabel}, {unresolvedThreads}, {generalComments}, {failingChecks}, {conflict}`
-						: `No custom preferences set. Using defaults.\n\nAvailable keys: ${availableKeys}\nTemplate variables: {owner}, {repo}, {number}, {host}, {prLabel}, {unresolvedThreads}, {generalComments}, {failingChecks}, {conflict}\n\nSet preferences with: ghpr-monitor(action='preferences', value='{"conflict": "⚠️ Conflict on {prLabel}!"}')`;
+					const helpText = `Current preferences:\n${prefsDisplay}\n\nAvailable keys: ${availableKeys}\nTemplate variables: {owner}, {repo}, {number}, {host}, {prLabel}, {unresolvedThreads}, {generalComments}, {failingChecks}, {conflict}\n\nSet a key to null to reset it to default, e.g. ghpr-monitor(action='preferences', value='{"conflict": null}')`;
 					return {
 						content: [{ type: "text", text: helpText }],
 						details: { action: "preferences", status: "read", preferences: currentPreferences },
 					};
 				}
-
 				case "stop": {
 					// The stop action is intentionally excluded from the tool's StringEnum
 					// so the LLM cannot invoke it. Only the user can stop monitoring via
