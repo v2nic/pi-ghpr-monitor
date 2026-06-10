@@ -513,7 +513,7 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 
 		if (monitors.size === 1) {
 			const mon = monitors.values().next().value!;
-			uiCtx.setStatus("ghpr-monitor", formatFooterStatus(mon.config, mon.lastStatus));
+			uiCtx.setStatus("ghpr-monitor", linkifyPRRefs(formatFooterStatus(mon.config, mon.lastStatus), mon.config.host));
 			return;
 		}
 
@@ -552,9 +552,10 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 				intervalSec: config.intervalSec,
 			})
 			: defaultInitialMsg;
+		const linkifiedInitialMsg = linkifyPRRefs(initialMsg, config.host);
 		pi.sendMessage({
 			customType: "ghpr-monitor",
-			content: initialMsg,
+			content: linkifiedInitialMsg,
 			display: true,
 			details: { action: "start", owner: config.owner, repo: config.repo, number: config.number },
 		});
@@ -569,9 +570,9 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 
 				// Check if PR was merged or closed
 				if (pr.state === "MERGED" || pr.state === "CLOSED") {
-					const prUrl = `https://${config.host}/${config.owner}/${config.repo}/pull/${config.number}`;
+					const prLabel = `${config.owner}/${config.repo}#${config.number}`;
 					const reason = pr.merged ? "merged" : "closed";
-					const msg = `${pr.merged ? "🔀" : "❌"} PR ${prUrl} was ${reason}. Monitoring stopped.`;
+					const msg = `${pr.merged ? "🔀" : "❌"} PR ${prLabel} was ${reason}. Monitoring stopped.`;
 					sendPRNotification(msg, msg, {deliverAs: "steer", host: config.host});
 					const key = prKey(config);
 					monitors.delete(key);
@@ -615,11 +616,11 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 				// Force-check: always consume the flag so /ghpr-monitor check is never
 				// a no-op. When the agent is active, queue the result for flush on turn_end.
 				if (mon.forceNotify) {
-					const prUrl = `https://${config.host}/${config.owner}/${config.repo}/pull/${config.number}`;
+					const prLabel = `${config.owner}/${config.repo}#${config.number}`;
 					const items = formatActionableItems(curr, config, currentPreferences);
 					const detItems = formatAgentNotification(curr, config, currentPreferences);
-					const msg = items ?? `\u2705 No issues found on ${prUrl}`;
-					const detMsg = detItems?.detailed ?? `\u2705 No issues found on ${prUrl}`;
+					const msg = items ?? `\u2705 No issues found on ${prLabel}`;
+					const detMsg = detItems?.detailed ?? `\u2705 No issues found on ${prLabel}`;
 					if (agentTurnActive) {
 						queuedForceChecks.push({ concise: msg, detailed: detMsg, host: config.host });
 					} else {
