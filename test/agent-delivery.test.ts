@@ -278,6 +278,132 @@ describe("No rogue pi.sendUserMessage() calls bypass sendPRNotification", () => 
 		}
 	});
 });
+describe("Queued update preserves detailed content", () => {
+	it("pollLoop computes formatAgentStatusUpdate before queuing updates", () => {
+		// Regression: when the agent turn is active, queued updates were using
+		// formatStatusUpdate() for both concise and detailed, losing enriched
+		// content (full body, path, line number). The fix computes
+		// formatAgentStatusUpdate() once so queuedUpdate.detailed gets the
+		// enriched version.
+		const pollBody = extractFunctionBody(src, "pollLoop");
+		expect(pollBody).not.toBeNull();
+
+		// The pollLoop must call formatAgentStatusUpdate to produce both
+		// concise and detailed content for the status update path.
+		expect(pollBody!).toContain("formatAgentStatusUpdate");
+	});
+
+	it("queuedUpdate uses detUpdate (detailed) not update (concise) for the detailed field", () => {
+		// Verify the queued update assignment uses detUpdate for detailed,
+		// not the concise `update` string from formatStatusUpdate.
+		const pollBody = extractFunctionBody(src, "pollLoop");
+		expect(pollBody).not.toBeNull();
+
+		// Find the queuedUpdate assignment using a whitespace-tolerant regex
+		// so the test doesn't break if the assignment is reformatted across
+		// multiple lines (e.g. by prettier).
+		const queuedAssignMatch = pollBody!.match(/queuedUpdate\s*=\s*\{[^}]+\}/);
+		expect(queuedAssignMatch).not.toBeNull();
+
+		const assignment = queuedAssignMatch![0];
+		// The concise field should use `update` (formatStatusUpdate's return)
+		// and the detailed field should use `detUpdate` (formatAgentStatusUpdate's detailed)
+		expect(assignment).toContain("concise: update");
+		expect(assignment).toContain("detailed: detUpdate");
+
+		// The detailed field should NOT be `update` (which was the bug)
+		expect(assignment).not.toMatch(/detailed:\s*update[,\s}]/);
+	});
+
+	it("queuedUpdate does not use identical concise and detailed strings", () => {
+		// The bug was: queuedUpdate = { concise: update, detailed: update, ... }
+		// This meant both fields got the same truncated content.
+		// After the fix: queuedUpdate = { concise: update, detailed: detUpdate, ... }
+		// where detUpdate comes from formatAgentStatusUpdate and can contain
+		// enriched content (thread details, comment details, etc.).
+		const pollBody = extractFunctionBody(src, "pollLoop");
+		expect(pollBody).not.toBeNull();
+
+		// Find the queuedUpdate assignment and verify it uses different variables
+		const queuedAssignMatch = pollBody!.match(/queuedUpdate\s*=\s*\{[^}]+\}/);
+		expect(queuedAssignMatch).not.toBeNull();
+
+		const assignment = queuedAssignMatch![0];
+		// The assignment should have concise: update and detailed: detUpdate
+		// (different variable names, meaning different content)
+		expect(assignment).toContain("concise: update");
+		expect(assignment).toContain("detailed: detUpdate");
+
+		// Should NOT have both concise and detailed set to the same variable
+		expect(assignment).not.toMatch(/concise:\s*update[^,]*,\s*detailed:\s*update/);
+	});
+
+	it("formatAgentStatusUpdate is computed before the if/update block", () => {
+		// The formatAgentStatusUpdate call should be OUTSIDE and BEFORE the
+		// if (update) block, so both the queued and immediate paths can use it.
+		const pollBody = extractFunctionBody(src, "pollLoop");
+		expect(pollBody).not.toBeNull();
+
+		const formatCallIdx = pollBody!.indexOf("formatAgentStatusUpdate");
+		expect(formatCallIdx).toBeGreaterThan(-1);
+
+		const ifUpdateIdx = pollBody!.indexOf("if (update)");
+		expect(ifUpdateIdx).toBeGreaterThan(-1);
+
+		// The formatAgentStatusUpdate call must come before the if (update) block
+		expect(formatCallIdx).toBeLessThan(ifUpdateIdx);
+	});
+
+	it("queuedForceChecks entries have distinct concise and detailed strings", () => {
+		// The force-check path already correctly computes both concise and
+		// detailed via formatAgentNotification. Verify this stays the case.
+		const pollBody = extractFunctionBody(src, "pollLoop");
+		expect(pollBody).not.toBeNull();
+
+		// Find the queuedForceChecks.push in the forceNotify block
+		const forceNotifyIdx = pollBody!.indexOf("if (mon.forceNotify)");
+		expect(forceNotifyIdx).toBeGreaterThan(-1);
+
+		const forceBlock = pollBody!.slice(forceNotifyIdx, forceNotifyIdx + 1000);
+
+		// Should compute formatAgentNotification for detailed content
+		expect(forceBlock).toContain("formatAgentNotification");
+
+		// The push should use distinct variables for concise and detailed
+		const pushMatch = forceBlock.match(/queuedForceChecks\.push\(\{[^}]+\}\)/);
+		expect(pushMatch).not.toBeNull();
+		expect(pushMatch![0]).toContain("concise: msg");
+		expect(pushMatch![0]).toContain("detailed: detMsg");
+	});
+
+	it("turn_end flush delivers both concise and detailed from queuedUpdate", () => {
+		// When the agent turn ends, the queued update is flushed via
+		// sendPRNotification, which should receive both the concise and
+		// detailed strings.
+		const turnEndIdx = src.indexOf('"turn_end"');
+		expect(turnEndIdx).toBeGreaterThan(-1);
+
+		const turnEndBlock = src.slice(turnEndIdx, turnEndIdx + 800);
+
+		// The flush should pass both concise and detailed to sendPRNotification
+		expect(turnEndBlock).toContain("update.concise");
+		expect(turnEndBlock).toContain("update.detailed");
+	});
+
+	it("turn_end flush delivers both concise and detailed from queuedForceChecks", () => {
+		// When the agent turn ends, queued force-check results are flushed via
+		// sendPRNotification, which should receive both concise and detailed.
+		const turnEndIdx = src.indexOf('"turn_end"');
+		expect(turnEndIdx).toBeGreaterThan(-1);
+
+		const turnEndBlock = src.slice(turnEndIdx, turnEndIdx + 1500);
+
+		// The force-check flush should pass both fc.concise and fc.detailed
+		expect(turnEndBlock).toContain("fc.concise");
+		expect(turnEndBlock).toContain("fc.detailed");
+	});
+});
+
 describe("Duplicate notification prevention via display flag", () => {
 	it("sendPRNotification uses display:!delivery on CustomMessage", () => {
 		const fnBody = extractFunctionBody(src, "sendPRNotification");
