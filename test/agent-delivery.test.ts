@@ -247,6 +247,12 @@ describe("No rogue pi.sendUserMessage() calls bypass sendPRNotification", () => 
 		const fnStart = src.indexOf("function sendPRNotification(");
 		const fnEnd = fnStart + fnBody!.length;
 
+		// Find sendStartPrompt bounds — this function legitimately calls
+		// pi.sendUserMessage() to inject a start prompt when monitoring begins
+		const startPromptFnBody = extractFunctionBody(src, "sendStartPrompt");
+		const startPromptFnStart = startPromptFnBody ? src.indexOf("function sendStartPrompt(") : -1;
+		const startPromptFnEnd = startPromptFnBody ? startPromptFnStart + startPromptFnBody.length : -1;
+
 		// Find all pi.sendUserMessage() calls
 		const callIdxs: number[] = [];
 		const re = /pi\.sendUserMessage\(/g;
@@ -259,11 +265,13 @@ describe("No rogue pi.sendUserMessage() calls bypass sendPRNotification", () => 
 			// Check if it's inside sendPRNotification
 			const insideSendPR = idx >= fnStart && idx <= fnEnd;
 
-			// Check if it's a steering prompt message
+			// Check if it's inside sendStartPrompt
+			const insideStartPrompt = startPromptFnStart >= 0 && idx >= startPromptFnStart && idx <= startPromptFnEnd;
+
+			// Check if it's a steering prompt message (user-provided message after PR URL)
 			const nearby = src.slice(Math.max(0, idx - 300), idx + 300);
 			const isSteerPrompt =
-				nearby.includes("steerMessage") ||
-				nearby.includes("The user wants to start");
+				nearby.includes("steerMessage");
 
 			// Check if it's in a comment
 			const lineStart = src.lastIndexOf("\n", idx) + 1;
@@ -271,8 +279,8 @@ describe("No rogue pi.sendUserMessage() calls bypass sendPRNotification", () => 
 			const isComment = lineText.startsWith("//") || lineText.startsWith("*");
 
 			expect(
-				insideSendPR || isSteerPrompt || isComment,
-				`pi.sendUserMessage() at index ${idx} should be inside sendPRNotification() or a steering prompt`
+				insideSendPR || insideStartPrompt || isSteerPrompt || isComment,
+				`pi.sendUserMessage() at index ${idx} should be inside sendPRNotification(), sendStartPrompt(), or a steering prompt`
 			).toBe(true);
 		}
 	});

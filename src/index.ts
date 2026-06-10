@@ -8,6 +8,10 @@
  * The tool polls one or more PRs for comments, conflicts, and CI status,
  * then injects notifications into the agent session so the LLM can take action.
  *
+ * When monitoring starts (via command or tool), a steering prompt is injected
+ * via pi.sendUserMessage() so the LLM sees the user requested monitoring and
+ * will actively respond to PR status notifications.
+ *
  * Multiple PRs can be monitored simultaneously — each runs its own
  * independent poll loop with its own state (backoff, status, reminders).
  */
@@ -506,6 +510,19 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 		return `Stopped monitoring ${keys.length} PR(s): ${keys.join(", ")}`;
 	}
 
+	/**
+	 * Send a steering prompt to the LLM when monitoring is started,
+	 * so the agent knows the user requested monitoring this PR and
+	 * will actively respond to notifications.
+	 */
+	function sendStartPrompt(config: MonitorConfig) {
+		if (NO_AGENT) return;
+		const prLabel = `${config.owner}/${config.repo}#${config.number}`;
+		const prUrl = `https://${config.host}/${config.owner}/${config.repo}/pull/${config.number}`;
+		const startPrompt = `The user requested monitoring PR ${prLabel} (${prUrl}). Watch for PR status updates and take action on any issues found: resolve review threads, fix CI failures, and address merge conflicts. Respond to each notification promptly.`;
+		pi.sendUserMessage(startPrompt, { deliverAs: "steer" });
+	}
+
 	function updateFooter() {
 		if (!uiCtx) return;
 		if (monitors.size === 0) {
@@ -872,6 +889,7 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 					ctx.ui.notify(result.message, "warning");
 				} else {
 					ctx.ui.notify(result.message, "success");
+					sendStartPrompt(config);
 				}
 				if (steerMessage) {
 					pi.sendUserMessage(steerMessage, NO_AGENT ? {} : { deliverAs: "steer" });
@@ -896,6 +914,7 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 					ctx.ui.notify(result.message, "warning");
 				} else {
 					ctx.ui.notify(result.message, "success");
+					sendStartPrompt(config);
 				}
 				return;
 			}
@@ -925,6 +944,7 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 					ctx.ui.notify(result.message, "warning");
 				} else {
 					ctx.ui.notify(result.message, "success");
+					sendStartPrompt(config);
 				}
 				if (steerMessage) {
 					pi.sendUserMessage(steerMessage, NO_AGENT ? {} : { deliverAs: "steer" });
@@ -1072,6 +1092,9 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 					};
 
 					const result = startMonitor(config);
+					if (!result.alreadyMonitoring) {
+						sendStartPrompt(config);
+					}
 					return {
 						content: [{ type: "text", text: result.message }],
 						details: {
