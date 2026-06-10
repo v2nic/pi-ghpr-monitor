@@ -159,7 +159,7 @@ describe("All notification paths use sendPRNotification for agent delivery", () 
 		const nudgeIdx = src.indexOf("Periodic nudge");
 		expect(nudgeIdx).toBeGreaterThan(-1);
 
-		const nearby = src.slice(nudgeIdx, Math.min(nudgeIdx + 500, src.length));
+		const nearby = src.slice(nudgeIdx, Math.min(nudgeIdx + 1000, src.length));
 		expect(nearby).toContain("sendPRNotification(");
 	});
 
@@ -167,7 +167,7 @@ describe("All notification paths use sendPRNotification for agent delivery", () 
 		const turnEndIdx = src.indexOf('"turn_end"');
 		expect(turnEndIdx).toBeGreaterThan(-1);
 
-		const nearby = src.slice(turnEndIdx, turnEndIdx + 800);
+		const nearby = src.slice(turnEndIdx, turnEndIdx + 2000);
 		expect(nearby).toContain("sendPRNotification(");
 	});
 
@@ -284,7 +284,7 @@ describe("Queued update preserves detailed content", () => {
 		// Regression: when the agent turn is active, queued updates were using
 		// formatStatusUpdate() for both concise and detailed, losing enriched
 		// content (full body, path, line number). The fix computes
-		// formatAgentStatusUpdate() once so queuedUpdate.detailed gets the
+		// formatAgentStatusUpdate() once so mon.pendingNotification.detailed gets the
 		// enriched version.
 		const pollBody = extractFunctionBody(src, "pollLoop");
 		expect(pollBody).not.toBeNull();
@@ -294,45 +294,43 @@ describe("Queued update preserves detailed content", () => {
 		expect(pollBody!).toContain("formatAgentStatusUpdate");
 	});
 
-	it("queuedUpdate uses detUpdate (detailed) not update (concise) for the detailed field", () => {
-		// Verify the queued update assignment uses detUpdate for detailed,
+	it("pendingNotification uses detUpdate (detailed) not update (concise) for the detailed field", () => {
+		// Verify the per-monitor pending notification uses detUpdate for detailed,
 		// not the concise `update` string from formatStatusUpdate.
 		const pollBody = extractFunctionBody(src, "pollLoop");
 		expect(pollBody).not.toBeNull();
 
-		// Find the queuedUpdate assignment using a whitespace-tolerant regex
-		// so the test doesn't break if the assignment is reformatted across
-		// multiple lines (e.g. by prettier).
-		const queuedAssignMatch = pollBody!.match(/queuedUpdate\s*=\s*\{[^}]+\}/);
-		expect(queuedAssignMatch).not.toBeNull();
+		// Find the mon.pendingNotification assignment using a whitespace-tolerant regex
+		const pendingAssignMatch = pollBody!.match(/mon\.pendingNotification\s*=\s*\{[^}]+\}/);
+		expect(pendingAssignMatch).not.toBeNull();
 
-		const assignment = queuedAssignMatch![0];
-		// The concise field should use `update` (formatStatusUpdate's return)
+		const assignment = pendingAssignMatch![0];
+		// The concise field should use `concUpdate` (formatAgentStatusUpdate's concise)
 		// and the detailed field should use `detUpdate` (formatAgentStatusUpdate's detailed)
-		expect(assignment).toContain("concise: update");
+		expect(assignment).toContain("concise: concUpdate");
 		expect(assignment).toContain("detailed: detUpdate");
 
 		// The detailed field should NOT be `update` (which was the bug)
 		expect(assignment).not.toMatch(/detailed:\s*update[,\s}]/);
 	});
 
-	it("queuedUpdate does not use identical concise and detailed strings", () => {
-		// The bug was: queuedUpdate = { concise: update, detailed: update, ... }
+	it("pendingNotification does not use identical concise and detailed strings", () => {
+		// The bug was: mon.pendingNotification = { concise: update, detailed: update, ... }
 		// This meant both fields got the same truncated content.
-		// After the fix: queuedUpdate = { concise: update, detailed: detUpdate, ... }
+		// After the fix: mon.pendingNotification = { concise: concUpdate, detailed: detUpdate, ... }
 		// where detUpdate comes from formatAgentStatusUpdate and can contain
 		// enriched content (thread details, comment details, etc.).
 		const pollBody = extractFunctionBody(src, "pollLoop");
 		expect(pollBody).not.toBeNull();
 
-		// Find the queuedUpdate assignment and verify it uses different variables
-		const queuedAssignMatch = pollBody!.match(/queuedUpdate\s*=\s*\{[^}]+\}/);
-		expect(queuedAssignMatch).not.toBeNull();
+		// Find the mon.pendingNotification assignment and verify it uses different variables
+		const pendingAssignMatch = pollBody!.match(/mon\.pendingNotification\s*=\s*\{[^}]+\}/);
+		expect(pendingAssignMatch).not.toBeNull();
 
-		const assignment = queuedAssignMatch![0];
+		const assignment = pendingAssignMatch![0];
 		// The assignment should have concise: update and detailed: detUpdate
 		// (different variable names, meaning different content)
-		expect(assignment).toContain("concise: update");
+		expect(assignment).toContain("concise: concUpdate");
 		expect(assignment).toContain("detailed: detUpdate");
 
 		// Should NOT have both concise and detailed set to the same variable
@@ -355,13 +353,13 @@ describe("Queued update preserves detailed content", () => {
 		expect(formatCallIdx).toBeLessThan(ifUpdateIdx);
 	});
 
-	it("queuedForceChecks entries have distinct concise and detailed strings", () => {
-		// The force-check path already correctly computes both concise and
+	it("forceNotify path assigns distinct concise and detailed to pendingNotification", () => {
+		// The force-check path correctly computes both concise and
 		// detailed via formatAgentNotification. Verify this stays the case.
 		const pollBody = extractFunctionBody(src, "pollLoop");
 		expect(pollBody).not.toBeNull();
 
-		// Find the queuedForceChecks.push in the forceNotify block
+		// Find the forceNotify block
 		const forceNotifyIdx = pollBody!.indexOf("if (mon.forceNotify)");
 		expect(forceNotifyIdx).toBeGreaterThan(-1);
 
@@ -370,38 +368,40 @@ describe("Queued update preserves detailed content", () => {
 		// Should compute formatAgentNotification for detailed content
 		expect(forceBlock).toContain("formatAgentNotification");
 
-		// The push should use distinct variables for concise and detailed
-		const pushMatch = forceBlock.match(/queuedForceChecks\.push\(\{[^}]+\}\)/);
-		expect(pushMatch).not.toBeNull();
-		expect(pushMatch![0]).toContain("concise: msg");
-		expect(pushMatch![0]).toContain("detailed: detMsg");
+		// The pendingNotification assignment should use distinct variables
+		const pendingMatch = forceBlock.match(/mon\.pendingNotification\s*=\s*\{[^}]+\}/);
+		expect(pendingMatch).not.toBeNull();
+		expect(pendingMatch![0]).toContain("concise: msg");
+		expect(pendingMatch![0]).toContain("detailed: detMsg");
 	});
 
-	it("turn_end flush delivers both concise and detailed from queuedUpdate", () => {
-		// When the agent turn ends, the queued update is flushed via
-		// sendPRNotification, which should receive both the concise and
-		// detailed strings.
+	it("turn_end batch flush delivers all pending notifications with concise and detailed", () => {
+		// When the agent turn ends, all per-monitor pending notifications are
+		// batched into a single sendPRNotification call combining concise and
+		// detailed content from each monitor.
 		const turnEndIdx = src.indexOf('"turn_end"');
 		expect(turnEndIdx).toBeGreaterThan(-1);
 
-		const turnEndBlock = src.slice(turnEndIdx, turnEndIdx + 800);
+		const turnEndBlock = src.slice(turnEndIdx, turnEndIdx + 2500);
 
-		// The flush should pass both concise and detailed to sendPRNotification
-		expect(turnEndBlock).toContain("update.concise");
-		expect(turnEndBlock).toContain("update.detailed");
+		// The batch flush should linkify each notification and pass to sendPRNotification
+		expect(turnEndBlock).toContain("batchEntries");
+		expect(turnEndBlock).toContain("sendPRNotification(combinedConcise, combinedDetailed");
+		expect(turnEndBlock).toContain("linkifyPRRefs");
 	});
 
-	it("turn_end flush delivers both concise and detailed from queuedForceChecks", () => {
-		// When the agent turn ends, queued force-check results are flushed via
-		// sendPRNotification, which should receive both concise and detailed.
+	it("turn_end batch flush delivers pending notifications with both concise and detailed", () => {
+		// When the agent turn ends, pending notifications from all monitors are
+		// batched and flushed with both concise and detailed content.
 		const turnEndIdx = src.indexOf('"turn_end"');
 		expect(turnEndIdx).toBeGreaterThan(-1);
 
-		const turnEndBlock = src.slice(turnEndIdx, turnEndIdx + 1500);
+		const turnEndBlock = src.slice(turnEndIdx, turnEndIdx + 2500);
 
-		// The force-check flush should pass both fc.concise and fc.detailed
-		expect(turnEndBlock).toContain("fc.concise");
-		expect(turnEndBlock).toContain("fc.detailed");
+		// The batch flush combines all pending notifications
+		expect(turnEndBlock).toContain("batchEntries");
+		expect(turnEndBlock).toContain("combinedConcise");
+		expect(turnEndBlock).toContain("combinedDetailed");
 	});
 });
 

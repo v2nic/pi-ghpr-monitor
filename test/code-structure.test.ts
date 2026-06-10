@@ -139,7 +139,7 @@ describe("forceNotify fix", () => {
 		expect(block).toContain("formatActionableItems(curr, config, currentPreferences)");
 		expect(block).toContain("formatAgentNotification(curr, config, currentPreferences)");
 		expect(block).toContain("sendPRNotification");
-		expect(block).toContain("queuedForceCheck");
+		expect(block).toContain("pendingNotification");
 	});
 
 	it("forceNotify block cleared after use", () => {

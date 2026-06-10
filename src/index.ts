@@ -245,6 +245,19 @@ export function prKey(a: string | MonitorConfig, b?: string, c?: number, d?: str
 }
 
 // ---------------------------------------------------------------------------
+// Pending notification (per-monitor queue for turn_end batching)
+// ---------------------------------------------------------------------------
+
+export interface PendingNotification {
+	/** Concise summary for TUI rendering */
+	concise: string;
+	/** Detailed content for agent context */
+	detailed: string;
+	/** Host for linkification */
+	host: string;
+}
+
+// ---------------------------------------------------------------------------
 // Active monitor entry
 // ---------------------------------------------------------------------------
 
@@ -262,6 +275,8 @@ export interface ActiveMonitor {
 	lastNudgeTime: number; // epoch ms
 	pollWakeResolve: (() => void) | null;
 	knownCommitOid: string | null;
+	/** Per-monitor pending notification, queued when agent turn is active */
+	pendingNotification: PendingNotification | null;
 }
 
 function createActiveMonitor(config: MonitorConfig): ActiveMonitor {
@@ -279,6 +294,7 @@ function createActiveMonitor(config: MonitorConfig): ActiveMonitor {
 		lastNudgeTime: 0,
 		pollWakeResolve: null,
 		knownCommitOid: null,
+		pendingNotification: null,
 	};
 }
 
@@ -289,10 +305,11 @@ function createActiveMonitor(config: MonitorConfig): ActiveMonitor {
 export default function ghprMonitorExtension(pi: ExtensionAPI) {
 	const monitors: Map<string, ActiveMonitor> = new Map();
 	let agentTurnActive = false;
-	let queuedUpdate: { concise: string; detailed: string; host: string; monitorKey: string } | null = null;
-	let queuedForceChecks: Array<{ concise: string; detailed: string; host: string; monitorKey: string }> = [];
 	// NOTE: Deduplication is per-monitor (mon.lastSentUpdate). No global lastSentUpdate
 	// to prevent cross-monitor dedup suppression. See issue #25.
+	// NOTE: Per-monitor pending notifications (mon.pendingNotification) replace the
+	// former global queuedUpdate/queuedForceChecks to prevent cross-monitor overwrite and
+	// enable batched delivery in turn_end. See issue #14.
 	let uiCtx: ExtensionUIContext | undefined;
 	const MAX_BACKOFF_SEC = 300; // 5 minutes max rate-limit backoff
 	const MAX_IDLE_SEC = 300; // 5 minutes max idle polling
@@ -421,29 +438,30 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 
 	pi.on("turn_end", () => {
 		agentTurnActive = false;
-		// Flush queued update when turn ends (if any)
-		if (queuedUpdate !== null) {
-			const update = queuedUpdate;
-			queuedUpdate = null;
-			sendPRNotification(update.concise, update.detailed, {deliverAs: "steer", host: update.host});
-			// Only update lastSentUpdate for the monitor that originated the queued update
-			const originatingMon = monitors.get(update.monitorKey);
-			if (originatingMon) {
-				originatingMon.lastSentUpdate = update.concise;
-			}
-			// Mark all monitors that their reminders are superseded
-			for (const mon of monitors.values()) {
-				mon.lastSentReminder = null;
+		// Collect all per-monitor pending notifications into a single batch.
+		// This avoids the race condition where multiple sendUserMessage calls
+		// in sequence cause "Agent is already processing a prompt" errors.
+		// We collect references first, then clear AFTER successful delivery
+		// so that if sendPRNotification throws, the notifications aren't lost.
+		const batchEntries: Array<{ mon: ActiveMonitor; notification: PendingNotification }> = [];
+		for (const mon of monitors.values()) {
+			if (mon.pendingNotification) {
+				batchEntries.push({ mon, notification: mon.pendingNotification });
 			}
 		}
-		// Flush queued force-check results when turn ends
-		if (queuedForceChecks.length > 0) {
-			for (const fc of queuedForceChecks) {
-				sendPRNotification(fc.concise, fc.detailed, {deliverAs: "steer", host: fc.host});
-			}
-			queuedForceChecks = [];
-			for (const mon of monitors.values()) {
-				mon.lastNudgeTime = Date.now();
+
+		if (batchEntries.length > 0) {
+			// Linkify each notification with its own host before joining,
+			// so multi-host batches get correct hyperlink targets per notification.
+			const combinedDetailed = batchEntries.map(e => linkifyPRRefs(e.notification.detailed, e.notification.host)).join("\n\n");
+			const combinedConcise = batchEntries.map(e => linkifyPRRefs(e.notification.concise, e.notification.host)).join("\n\n");
+			sendPRNotification(combinedConcise, combinedDetailed, { deliverAs: "steer" });
+
+			// Clear pending notifications and update per-monitor state AFTER successful delivery
+			for (const e of batchEntries) {
+				e.mon.pendingNotification = null;
+				e.mon.lastSentUpdate = e.notification.concise;
+				e.mon.lastSentReminder = null;
 			}
 		}
 		// Schedule a reminder on next poll for each monitor with actionable items
@@ -622,8 +640,10 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 
 				if (update) {
 					if (agentTurnActive) {
-						// Don't spam the LLM while it's working - queue for later
-						queuedUpdate = { concise: update, detailed: detUpdate, host: config.host, monitorKey: prKey(config) };
+						// Don't spam the LLM while it's working - queue on per-monitor state
+						// for batched delivery on turn_end
+						const { concise: concUpdate, detailed: detUpdate } = formatAgentStatusUpdate(mon.lastStatus, curr, config, currentPreferences);
+						mon.pendingNotification = { concise: concUpdate, detailed: detUpdate, host: config.host };
 					} else if (update !== mon.lastSentUpdate) {
 						// Only send if something changed since last update
 						sendPRNotification(update, detUpdate, {deliverAs: "steer", host: config.host});
@@ -658,7 +678,7 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 					const msg = items ?? `\u2705 No issues found on ${prLabel}`;
 					const detMsg = detItems?.detailed ?? `\u2705 No issues found on ${prLabel}`;
 					if (agentTurnActive) {
-						queuedForceChecks.push({ concise: msg, detailed: detMsg, host: config.host, monitorKey: prKey(config) });
+						mon.pendingNotification = { concise: msg, detailed: detMsg, host: config.host };
 					} else {
 						sendPRNotification(msg, detMsg, {deliverAs: "steer", host: config.host});
 					}
@@ -669,17 +689,22 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 
 				// Periodic nudge
 				if (
-					!agentTurnActive &&
-					!mon.needsReminder &&
 					mon.lastNudgeTime > 0 &&
 					Date.now() - mon.lastNudgeTime >= NUDGE_COOLDOWN_MS
 				) {
 					const nudge = formatActionableItems(curr, config, currentPreferences);
 					const detNudge = formatAgentNotification(curr, config, currentPreferences);
 					if (nudge) {
-						sendPRNotification(nudge, detNudge?.detailed ?? nudge, {deliverAs: "steer", host: config.host});
-						mon.lastSentReminder = nudge;
-						mon.lastNudgeTime = Date.now();
+						if (agentTurnActive) {
+							// Queue nudge only if nothing higher-priority is already queued
+							if (!mon.pendingNotification) {
+								mon.pendingNotification = { concise: nudge, detailed: detNudge?.detailed ?? nudge, host: config.host };
+							}
+						} else if (!mon.needsReminder) {
+							sendPRNotification(nudge, detNudge?.detailed ?? nudge, {deliverAs: "steer", host: config.host});
+							mon.lastSentReminder = nudge;
+							mon.lastNudgeTime = Date.now();
+						}
 					}
 				}
 
@@ -718,7 +743,10 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 						);
 						if (agentTurnActive) {
 							// Queue for flush on turn_end, matching the pattern used by status updates and force-checks
-							queuedForceChecks.push({ concise: stalenessMsg, detailed: stalenessMsg, host: config.host });
+							// Only queue if not already queued (status updates take priority)
+					if (!mon.pendingNotification) {
+						mon.pendingNotification = { concise: stalenessMsg, detailed: stalenessMsg, host: config.host };
+					}
 						} else {
 							sendPRNotification(stalenessMsg, stalenessMsg, {deliverAs: "steer", host: config.host});
 						}
