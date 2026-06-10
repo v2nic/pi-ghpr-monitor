@@ -74,7 +74,7 @@ export const PreferencesSchema = Type.Object(
 		descriptionStaleness: Type.Optional(
 			Type.String({
 				description:
-					"Prompt override for description staleness nudge when new commits are detected. Variables: {owner}, {repo}, {number}, {host}, {prLabel}",
+					"Prompt override for description staleness nudge when new commits are detected. Variables: {owner}, {repo}, {number}, {host}, {prLabel}, {commitOid}, {commitShortOid}, {commitUrl}",
 			}),
 		),
 	},
@@ -156,9 +156,13 @@ export interface TemplateVars {
 	failingChecks?: string;
 	conflict?: boolean;
 	intervalSec?: number;
+	// Commit-related (used by descriptionStaleness)
+	commitOid?: string;
+	commitShortOid?: string;
+	commitUrl?: string;
 }
 
-const TEMPLATE_VAR_RE = /\{(owner|repo|number|host|prLabel|prUrl|unresolvedThreads|generalComments|failingChecks|conflict|intervalSec)\}/g;
+const TEMPLATE_VAR_RE = /\{(owner|repo|number|host|prLabel|prUrl|unresolvedThreads|generalComments|failingChecks|conflict|intervalSec|commitOid|commitShortOid|commitUrl)\}/g;
 
 /** Non-global version for .test() checks. The /g flag causes .test() to
  *  advance lastIndex across successive calls, producing false negatives.
@@ -196,6 +200,12 @@ export function interpolateTemplate(template: string, vars: TemplateVars): strin
 				return vars.conflict !== undefined ? String(vars.conflict) : match;
 			case "intervalSec":
 				return vars.intervalSec !== undefined ? String(vars.intervalSec) : match;
+			case "commitOid":
+				return vars.commitOid ?? match;
+			case "commitShortOid":
+				return vars.commitShortOid ?? match;
+			case "commitUrl":
+				return vars.commitUrl ?? match;
 			default:
 				return match;
 		}
