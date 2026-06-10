@@ -1224,14 +1224,6 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 						content: [{ type: "text", text: helpText }],
 						details: { action: "preferences", status: "read", preferences: currentPreferences },
 					};
-				}					}
-					const prefsDisplay = lines.join("\n");
-					const availableKeys = Object.keys(PreferencesSchema.properties).join(", ");
-					const helpText = `Current preferences:\n${prefsDisplay}\n\nAvailable keys: ${availableKeys}\nTemplate variables: {owner}, {repo}, {number}, {host}, {prLabel}, {unresolvedThreads}, {generalComments}, {failingChecks}, {conflict}\n\nSet a key to null to reset it to default, e.g. ghpr-monitor(action='preferences', value='{"conflict": null}')`;
-					return {
-						content: [{ type: "text", text: helpText }],
-						details: { action: "preferences", status: "read", preferences: currentPreferences },
-					};
 				}
 				case "stop": {
 					// The stop action is intentionally excluded from the tool's StringEnum
