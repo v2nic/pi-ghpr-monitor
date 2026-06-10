@@ -378,7 +378,7 @@ describe("formatStatusUpdate", () => {
 			pendingChecks: [],
 			lastCommentTimestamp: "",
 			lastCommentBySelf: false,
-lastCommitOid: "",
+			lastCommitOid: "",
 		};
 		const update = formatStatusUpdate(null, curr, config);
 		expect(update).toContain("all clear");
@@ -393,7 +393,7 @@ lastCommitOid: "",
 			pendingChecks: [],
 			lastCommentTimestamp: "",
 			lastCommentBySelf: false,
-lastCommitOid: "",
+			lastCommitOid: "",
 		};
 		const update = formatStatusUpdate(null, curr, config);
 		expect(update).toContain("conflict");
@@ -408,7 +408,7 @@ lastCommitOid: "",
 			pendingChecks: [],
 			lastCommentTimestamp: "",
 			lastCommentBySelf: false,
-lastCommitOid: "",
+			lastCommitOid: "",
 		};
 		const update = formatStatusUpdate(null, curr, config);
 		expect(update).toContain("Failing");
@@ -424,7 +424,7 @@ lastCommitOid: "",
 			pendingChecks: [],
 			lastCommentTimestamp: "",
 			lastCommentBySelf: false,
-lastCommitOid: "",
+			lastCommitOid: "",
 		};
 		const curr: PRStatus = {
 			...prev,
@@ -443,7 +443,7 @@ lastCommitOid: "",
 			pendingChecks: ["ci/build"],
 			lastCommentTimestamp: "",
 			lastCommentBySelf: false,
-lastCommitOid: "",
+			lastCommitOid: "",
 		};
 		const curr: PRStatus = {
 			unresolvedThreads: 0,
@@ -453,7 +453,7 @@ lastCommitOid: "",
 			pendingChecks: [],
 			lastCommentTimestamp: "",
 			lastCommentBySelf: false,
-lastCommitOid: "",
+			lastCommitOid: "",
 		};
 		const update = formatStatusUpdate(prev, curr, config);
 		expect(update).toContain("passed");
@@ -468,7 +468,7 @@ lastCommitOid: "",
 			pendingChecks: [],
 			lastCommentTimestamp: "",
 			lastCommentBySelf: false,
-lastCommitOid: "",
+			lastCommitOid: "",
 		};
 		const update = formatStatusUpdate(null, curr, config);
 		expect(update).toContain("all clear");
@@ -483,7 +483,7 @@ lastCommitOid: "",
 			pendingChecks: [],
 			lastCommentTimestamp: "",
 			lastCommentBySelf: false,
-lastCommitOid: "",
+			lastCommitOid: "",
 		};
 		const update = formatStatusUpdate(null, curr, config);
 		// When prev is null, format uses "N new" format since prev count defaults to 0
@@ -499,7 +499,7 @@ lastCommitOid: "",
 			pendingChecks: ["ci/test", "ci/lint"],
 			lastCommentTimestamp: "",
 			lastCommentBySelf: false,
-lastCommitOid: "",
+			lastCommitOid: "",
 		};
 		const update = formatStatusUpdate(null, curr, config);
 		expect(update).not.toContain("pending");
@@ -525,7 +525,7 @@ describe("formatActionableItems", () => {
 			pendingChecks: [],
 			lastCommentTimestamp: "",
 			lastCommentBySelf: false,
-lastCommitOid: "",
+			lastCommitOid: "",
 		};
 		expect(formatActionableItems(status, config)).toBeNull();
 	});
@@ -539,7 +539,7 @@ lastCommitOid: "",
 			pendingChecks: [],
 			lastCommentTimestamp: "",
 			lastCommentBySelf: false,
-lastCommitOid: "",
+			lastCommitOid: "",
 		};
 		const result = formatActionableItems(status, config);
 		expect(result).toContain("Merge conflicts detected");
@@ -554,7 +554,7 @@ lastCommitOid: "",
 			pendingChecks: [],
 			lastCommentTimestamp: "",
 			lastCommentBySelf: false,
-lastCommitOid: "",
+			lastCommitOid: "",
 		};
 		const result = formatActionableItems(status, config);
 		expect(result).toContain("Failing CI checks");
@@ -571,7 +571,7 @@ lastCommitOid: "",
 			pendingChecks: [],
 			lastCommentTimestamp: "",
 			lastCommentBySelf: false,
-lastCommitOid: "",
+			lastCommitOid: "",
 		};
 		const result = formatActionableItems(status, config);
 		expect(result).toContain("3 unresolved review thread(s)");
@@ -586,7 +586,7 @@ lastCommitOid: "",
 			pendingChecks: [],
 			lastCommentTimestamp: "",
 			lastCommentBySelf: false,
-lastCommitOid: "",
+			lastCommitOid: "",
 		};
 		const result = formatActionableItems(status, config);
 		expect(result).toContain("2 general comment(s)");
@@ -601,7 +601,7 @@ lastCommitOid: "",
 			pendingChecks: ["ci/build"],
 			lastCommentTimestamp: "",
 			lastCommentBySelf: false,
-lastCommitOid: "",
+			lastCommitOid: "",
 		};
 		expect(formatActionableItems(status, config)).toBeNull();
 	});
@@ -615,7 +615,7 @@ lastCommitOid: "",
 			pendingChecks: [],
 			lastCommentTimestamp: "",
 			lastCommentBySelf: false,
-lastCommitOid: "",
+			lastCommitOid: "",
 		};
 		expect(formatActionableItems(status, config)).toBeNull();
 	});
@@ -629,7 +629,7 @@ lastCommitOid: "",
 			pendingChecks: ["ci/build"],
 			lastCommentTimestamp: "",
 			lastCommentBySelf: false,
-lastCommitOid: "",
+			lastCommitOid: "",
 		};
 		const result = formatActionableItems(status, config);
 		expect(result).toContain("Merge conflicts detected");
@@ -660,7 +660,7 @@ describe("formatStatusUpdate with detail", () => {
 			pendingChecks: [],
 			lastCommentTimestamp: "",
 			lastCommentBySelf: false,
-lastCommitOid: "",
+			lastCommitOid: "",
 			threadDetails: [
 				{ id: "PRRT_1", isResolved: false, lastCommentAuthor: "reviewer", lastCommentBody: "Please fix this typo" },
 				{ id: "PRRT_2", isResolved: false, lastCommentAuthor: "bot", lastCommentBody: "Build failed" },
@@ -684,7 +684,7 @@ lastCommitOid: "",
 			pendingChecks: [],
 			lastCommentTimestamp: "",
 			lastCommentBySelf: false,
-lastCommitOid: "",
+			lastCommitOid: "",
 			threadDetails: [],
 			commentDetails: [
 				{ id: "C_1", author: "teammate", body: "Can you add tests?" },
@@ -706,7 +706,7 @@ lastCommitOid: "",
 			pendingChecks: [],
 			lastCommentTimestamp: "",
 			lastCommentBySelf: false,
-lastCommitOid: "",
+			lastCommitOid: "",
 			threadDetails: [],
 			commentDetails: [],
 			checkDetails: [
@@ -728,7 +728,7 @@ lastCommitOid: "",
 			pendingChecks: [],
 			lastCommentTimestamp: "",
 			lastCommentBySelf: false,
-lastCommitOid: "",
+			lastCommitOid: "",
 			threadDetails: [],
 			commentDetails: [
 				{ id: "C_1", author: "user", body: longBody },
@@ -750,7 +750,7 @@ lastCommitOid: "",
 			pendingChecks: [],
 			lastCommentTimestamp: "",
 			lastCommentBySelf: false,
-lastCommitOid: "",
+			lastCommitOid: "",
 			threadDetails: [],
 			commentDetails: [
 				{ id: "C_1", author: "v2nic", body: multilineBody },
@@ -888,7 +888,7 @@ describe("formatStatusUpdate does not repeat all-clear on unchanged status", () 
 			unresolvedThreads: 0, generalComments: 0, hasConflicts: false,
 			failingChecks: [], pendingChecks: [],
 			lastCommentTimestamp: "", lastCommentBySelf: false,
-lastCommitOid: "",
+			lastCommitOid: "",
 			threadDetails: [], commentDetails: [], checkDetails: [],
 		};
 		const result = formatStatusUpdate(null, clean, config);
@@ -900,7 +900,7 @@ lastCommitOid: "",
 			unresolvedThreads: 1, generalComments: 0, hasConflicts: false,
 			failingChecks: ["ci/test"], pendingChecks: [],
 			lastCommentTimestamp: "", lastCommentBySelf: false,
-lastCommitOid: "",
+			lastCommitOid: "",
 			threadDetails: [], commentDetails: [],
 			checkDetails: [{ name: "ci/test", conclusion: "FAILURE" }],
 		};
@@ -908,7 +908,7 @@ lastCommitOid: "",
 			unresolvedThreads: 0, generalComments: 0, hasConflicts: false,
 			failingChecks: [], pendingChecks: [],
 			lastCommentTimestamp: "", lastCommentBySelf: false,
-lastCommitOid: "",
+			lastCommitOid: "",
 			threadDetails: [], commentDetails: [], checkDetails: [],
 		};
 		const result = formatStatusUpdate(hadIssues, clean, config);
@@ -920,7 +920,7 @@ lastCommitOid: "",
 			unresolvedThreads: 0, generalComments: 0, hasConflicts: false,
 			failingChecks: [], pendingChecks: [],
 			lastCommentTimestamp: "", lastCommentBySelf: false,
-lastCommitOid: "",
+			lastCommitOid: "",
 			threadDetails: [], commentDetails: [], checkDetails: [],
 		};
 		const result = formatStatusUpdate(clean, clean, config);
@@ -932,7 +932,7 @@ lastCommitOid: "",
 			unresolvedThreads: 0, generalComments: 0, hasConflicts: false,
 			failingChecks: [], pendingChecks: [],
 			lastCommentTimestamp: "", lastCommentBySelf: false,
-lastCommitOid: "",
+			lastCommitOid: "",
 			threadDetails: [], commentDetails: [], checkDetails: [],
 		};
 		const first = formatStatusUpdate(null, clean, config);
@@ -951,7 +951,7 @@ describe("formatFooterStatus", () => {
 		unresolvedThreads: 0, generalComments: 0, hasConflicts: false,
 		failingChecks: [], pendingChecks: [],
 		lastCommentTimestamp: "", lastCommentBySelf: false,
-lastCommitOid: "",
+			lastCommitOid: "",
 		threadDetails: [], commentDetails: [], checkDetails: [],
 	};
 

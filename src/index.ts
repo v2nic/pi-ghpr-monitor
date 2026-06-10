@@ -665,7 +665,12 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 							{ owner: config.owner, repo: config.repo, number: config.number, host: config.host, prLabel },
 							defaultStalenessMsg,
 						);
-						sendPRNotification(stalenessMsg, stalenessMsg, {deliverAs: "steer", host: config.host});
+						if (agentTurnActive) {
+							// Queue for flush on turn_end, matching the pattern used by status updates and force-checks
+							queuedForceChecks.push({ concise: stalenessMsg, detailed: stalenessMsg, host: config.host });
+						} else {
+							sendPRNotification(stalenessMsg, stalenessMsg, {deliverAs: "steer", host: config.host});
+						}
 						mon.knownCommitOid = curr.lastCommitOid;
 					}
 				}

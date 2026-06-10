@@ -500,14 +500,14 @@ describe("preferences in notification formatting", () => {
 	});
 
 	it("descriptionStaleness preference supports {owner}, {repo}, {number}, {host}, {prLabel} variables", () => {
-		const result = interpolateTemplate("New push to {owner}/{repo}#{number} on {host}", {
+		const result = interpolateTemplate("New push to {prLabel} ({owner}/{repo}#{number}) on {host}", {
 			owner: "v2nic",
 			repo: "pi-ghpr-monitor",
 			number: 37,
 			host: "github.com",
 			prLabel: "v2nic/pi-ghpr-monitor#37",
 		});
-		expect(result).toBe("New push to v2nic/pi-ghpr-monitor#37 on github.com");
+		expect(result).toBe("New push to v2nic/pi-ghpr-monitor#37 (v2nic/pi-ghpr-monitor#37) on github.com");
 	});
 
 	it("descriptionStaleness preference is included in PreferencesSchema keys", () => {

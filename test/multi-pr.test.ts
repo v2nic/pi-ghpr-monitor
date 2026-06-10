@@ -663,7 +663,7 @@ describe("Description staleness nudge simulation", () => {
 		mon: SimMonitor,
 		currentCommitOid: string,
 	): boolean {
-		// First poll: learn the current commit without nudging
+		// First poll: skip nudging (knownCommitOid starts as null)
 		if (mon.knownCommitOid === null) {
 			return false;
 		}
