@@ -160,6 +160,7 @@ describe("interpolateTemplate", () => {
 		number: 32,
 		host: "github.com",
 		prLabel: "v2nic/pi-ghpr-monitor#32",
+		prUrl: "https://github.com/v2nic/pi-ghpr-monitor/pull/32",
 	};
 
 	it("replaces all basic template variables", () => {
@@ -170,6 +171,11 @@ describe("interpolateTemplate", () => {
 	it("replaces prLabel", () => {
 		const result = interpolateTemplate("PR: {prLabel}", vars);
 		expect(result).toBe("PR: v2nic/pi-ghpr-monitor#32");
+	});
+
+	it("replaces prUrl", () => {
+		const result = interpolateTemplate("PR: {prUrl}", vars);
+		expect(result).toBe("PR: https://github.com/v2nic/pi-ghpr-monitor/pull/32");
 	});
 
 	it("replaces situation-specific variables when provided", () => {
@@ -222,6 +228,7 @@ describe("getPreferenceWithDefault", () => {
 		number: 32,
 		host: "github.com",
 		prLabel: "v2nic/pi-ghpr-monitor#32",
+		prUrl: "https://github.com/v2nic/pi-ghpr-monitor/pull/32",
 	};
 
 	it("returns default when preference is undefined", () => {

@@ -131,7 +131,7 @@ describe("All notification paths use sendPRNotification for agent delivery", () 
 	});
 
 	it("merged/closed PR notifications use sendPRNotification", () => {
-		const mergedIdx = src.indexOf("was merged");
+		const mergedIdx = src.indexOf("Monitoring stopped.");
 		expect(mergedIdx).toBeGreaterThan(-1);
 
 		const nearby = src.slice(Math.max(0, mergedIdx - 500), mergedIdx + 500);

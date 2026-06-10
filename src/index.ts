@@ -561,11 +561,12 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 		const signal = controller.signal;
 
 		// Initial check
-		const defaultInitialMsg = `📡 Monitoring ${config.owner}/${config.repo}#${config.number}... (polling every ${config.intervalSec}s)`;
+		const defaultInitialMsg = `📡 Monitoring ${config.owner}/${config.repo}#${config.number} (polling every ${config.intervalSec}s)`;
 		const initialMsg = currentPreferences.firstPoll
 			? interpolateTemplate(currentPreferences.firstPoll, {
 				owner: config.owner, repo: config.repo, number: config.number, host: config.host,
 				prLabel: `${config.owner}/${config.repo}#${config.number}`,
+				prUrl: `https://${config.host}/${config.owner}/${config.repo}/pull/${config.number}`,
 				intervalSec: config.intervalSec,
 			})
 			: defaultInitialMsg;
@@ -574,7 +575,7 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 			customType: "ghpr-monitor",
 			content: linkifiedInitialMsg,
 			display: true,
-			details: { action: "start", owner: config.owner, repo: config.repo, number: config.number },
+			details: { concise: linkifiedInitialMsg, action: "start", owner: config.owner, repo: config.repo, number: config.number },
 		});
 
 		for (;;) {
@@ -588,9 +589,11 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 				// Check if PR was merged or closed
 				if (pr.state === "MERGED" || pr.state === "CLOSED") {
 					const prLabel = `${config.owner}/${config.repo}#${config.number}`;
+					const prUrl = `https://${config.host}/${config.owner}/${config.repo}/pull/${config.number}`;
 					const reason = pr.merged ? "merged" : "closed";
-					const msg = `${pr.merged ? "🔀" : "❌"} PR ${prLabel} was ${reason}. Monitoring stopped.`;
-					sendPRNotification(msg, msg, {deliverAs: "steer", host: config.host});
+					const concise = `${pr.merged ? "🔀" : "❌"} PR ${prLabel} was ${reason}. Monitoring stopped.`;
+					const detailed = `${pr.merged ? "🔀" : "❌"} PR ${prUrl} was ${reason}. Monitoring stopped.`;
+					sendPRNotification(concise, detailed, {deliverAs: "steer", host: config.host});
 					const key = prKey(config);
 					monitors.delete(key);
 					updateFooter();
@@ -633,10 +636,11 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 				// a no-op. When the agent is active, queue the result for flush on turn_end.
 				if (mon.forceNotify) {
 					const prLabel = `${config.owner}/${config.repo}#${config.number}`;
+					const prUrl = `https://${config.host}/${config.owner}/${config.repo}/pull/${config.number}`;
 					const items = formatActionableItems(curr, config, currentPreferences);
 					const detItems = formatAgentNotification(curr, config, currentPreferences);
 					const msg = items ?? `\u2705 No issues found on ${prLabel}`;
-					const detMsg = detItems?.detailed ?? `\u2705 No issues found on ${prLabel}`;
+					const detMsg = detItems?.detailed ?? `\u2705 No issues found on ${prUrl}`;
 					if (agentTurnActive) {
 						queuedForceChecks.push({ concise: msg, detailed: detMsg, host: config.host, monitorKey: prKey(config) });
 					} else {
@@ -1051,8 +1055,7 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 			"Use action='check' to trigger an immediate poll.",
 			"Use action='preferences' to view current preferences or update them with a value parameter.",
 			"The value parameter for preferences is a JSON string with keys: newComments, conflict, ciFailure, reminder, allClear, firstPoll.",
-			"Set a key to null to reset it to default, e.g. {\"conflict\": null}.",
-			"Template variables available in preferences: {owner}, {repo}, {number}, {host}, {prLabel}, plus situation-specific vars like {failingChecks}, {unresolvedThreads}, {generalComments}, {conflict}.",
+			"Template variables available in preferences: {owner}, {repo}, {number}, {host}, {prLabel}, {prUrl}, plus situation-specific vars like {failingChecks}, {unresolvedThreads}, {generalComments}, {conflict}.",
 			"Do NOT stop monitoring on your own. Only the user can stop monitoring via /ghpr-monitor off.",
 			"Monitoring runs until the user stops it via /ghpr-monitor off, or the PR is merged/closed.",
 			"You will receive PR status updates as notifications.",
@@ -1272,7 +1275,9 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 					}
 					const prefsDisplay = lines.join("\n");
 					const availableKeys = Object.keys(PreferencesSchema.properties).join(", ");
-					const helpText = `Current preferences:\n${prefsDisplay}\n\nAvailable keys: ${availableKeys}\nTemplate variables: {owner}, {repo}, {number}, {host}, {prLabel}, {unresolvedThreads}, {generalComments}, {failingChecks}, {conflict}\n\nSet a key to null to reset it to default, e.g. ghpr-monitor(action='preferences', value='{"conflict": null}')`;
+					const helpText = hasPrefs
+						? `Current preferences:\n${prefsDisplay}\n\nAvailable keys: ${availableKeys}\nTemplate variables: {owner}, {repo}, {number}, {host}, {prLabel}, {prUrl}, {unresolvedThreads}, {generalComments}, {failingChecks}, {conflict}`
+						: `No custom preferences set. Using defaults.\n\nAvailable keys: ${availableKeys}\nTemplate variables: {owner}, {repo}, {number}, {host}, {prLabel}, {prUrl}, {unresolvedThreads}, {generalComments}, {failingChecks}, {conflict}\n\nSet preferences with: ghpr-monitor(action='preferences', value='{"conflict": "⚠️ Conflict on {prLabel}!"}')`;
 					return {
 						content: [{ type: "text", text: helpText }],
 						details: { action: "preferences", status: "read", preferences: currentPreferences },
