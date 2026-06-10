@@ -628,7 +628,9 @@ export function linkifyPRRefs(text: string, defaultHost: string = "github.com"):
 
 	// First pass: wrap existing full PR URLs in OSC 8 hyperlinks.
 	// Matches https://github.com/owner/repo/pull/123 (or any host)
-	const urlPattern = /https?:\/\/([^\/\s]+)\/([^\/\s]+)\/([^\/\s]+)\/pull\/([0-9]+)/g;
+	// Word boundary (\b) after the number prevents trailing punctuation
+	// (e.g. "...", ".", ",") from being captured as part of the URL.
+	const urlPattern = /https?:\/\/([^\/\s]+)\/([^\/\s]+)\/([^\/\s]+)\/pull\/([0-9]+)\b/g;
 	text = text.replace(urlPattern, (_match, host: string, owner: string, repo: string, number: string) => {
 		const url = `https://${host}/${owner}/${repo}/pull/${number}`;
 		return `\x1b]8;;${url}\x1b\\${url}\x1b]8;;\x1b\\`;
@@ -636,7 +638,9 @@ export function linkifyPRRefs(text: string, defaultHost: string = "github.com"):
 
 	// Second pass: replace owner/repo#number patterns with OSC 8 hyperlinks.
 	// These link to defaultHost (default: github.com).
-	const refPattern = /([a-zA-Z0-9_.-]+)\/([a-zA-Z0-9_.-]+)#([0-9]+)/g;
+	// Word boundary (\b) after the number prevents trailing punctuation
+	// (e.g. "...", ".", ",") from being captured as part of the reference.
+	const refPattern = /([a-zA-Z0-9_.-]+)\/([a-zA-Z0-9_.-]+)#([0-9]+)\b/g;
 	text = text.replace(refPattern, (_match, owner: string, repo: string, number: string) => {
 		const url = `https://${defaultHost}/${owner}/${repo}/pull/${number}`;
 		return `\x1b]8;;${url}\x1b\\${owner}/${repo}#${number}\x1b]8;;\x1b\\`;
