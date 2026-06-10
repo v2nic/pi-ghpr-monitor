@@ -764,11 +764,10 @@ describe("Idle backoff caps at 5 minutes", () => {
 	const MAX_IDLE_SEC = 300; // must match src/index.ts
 
 	function computeWaitSec(consecutiveNoChange: number, backoffSec: number): number {
-		const baseSec = backoffSec > 0 ? backoffSec : INTERVAL_SEC;
 		const idleSec = consecutiveNoChange > 3
 			? Math.min(INTERVAL_SEC * Math.pow(2, consecutiveNoChange - 3), MAX_IDLE_SEC)
-			: baseSec;
-		return idleSec;
+			: INTERVAL_SEC;
+		return backoffSec > 0 ? backoffSec : idleSec;
 	}
 
 	it("uses base interval for first 4 polls", () => {
@@ -802,21 +801,27 @@ describe("Idle backoff caps at 5 minutes", () => {
 	});
 
 	it("error backoff takes precedence over idle backoff", () => {
-		// When there's an active error backoff, use that instead
+		// When there's an active error backoff, use that instead of idle backoff
 		expect(computeWaitSec(0, 120)).toBe(120);
 		expect(computeWaitSec(5, 240)).toBe(240);
+		// Copilot review catch: consecutiveNoChange > 3 with high backoffSec
+		// Previously this used the idle formula (120s) instead of backoffSec (300s)
+		expect(computeWaitSec(4, 300)).toBe(300);
+		expect(computeWaitSec(10, 120)).toBe(120);
+		expect(computeWaitSec(100, 300)).toBe(300);
 	});
 
-	it("polling interval does not depend on agentTurnActive", () => {
+	it("polling interval does not depend on agentTurnActive and error backoff takes precedence", () => {
 		// Previously: waitSec = agentTurnActive ? Math.max(idleSec, 300) : idleSec
 		// This meant polling was delayed 5+ minutes when agent was working,
 		// exactly when the user needs CI status updates.
-		// Now: waitSec = idleSec (polling is decoupled from agent activity)
+		// Now: waitSec = backoffSec > 0 ? backoffSec : idleSec
+		// (polling is decoupled from agent activity; error backoff takes precedence over idle)
 		const src = require("fs").readFileSync(require("path").join(__dirname, "../src/index.ts"), "utf-8");
 		// Verify the old pattern is gone
 		expect(src).not.toContain("agentTurnActive ? Math.max(idleSec");
-		// Verify waitSec is just idleSec
-		expect(src).toContain("const waitSec = idleSec;");
+		// Verify waitSec uses backoffSec when present, otherwise idleSec
+		expect(src).toContain("const waitSec = mon.backoffSec > 0 ? mon.backoffSec : idleSec;");
 	});
 });
 

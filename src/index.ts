@@ -631,11 +631,10 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 			}
 
 			// Wait for interval (abortable), with backoff after any error
-			const baseSec = mon.backoffSec > 0 ? mon.backoffSec : config.intervalSec;
 			const idleSec = mon.consecutiveNoChange > 3
 				? Math.min(config.intervalSec * Math.pow(2, mon.consecutiveNoChange - 3), MAX_IDLE_SEC)
-				: baseSec;
-			const waitSec = idleSec;
+				: config.intervalSec;
+			const waitSec = mon.backoffSec > 0 ? mon.backoffSec : idleSec;
 			await new Promise<void>((resolve) => {
 				mon.pollWakeResolve = resolve;
 				const timer = setTimeout(() => {
