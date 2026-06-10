@@ -149,6 +149,7 @@ export interface TemplateVars {
 	number: number;
 	host: string;
 	prLabel: string;
+	prUrl: string;
 	// Situation-specific (may be undefined depending on context)
 	unresolvedThreads?: number;
 	generalComments?: number;
@@ -157,7 +158,7 @@ export interface TemplateVars {
 	intervalSec?: number;
 }
 
-const TEMPLATE_VAR_RE = /\{(owner|repo|number|host|prLabel|unresolvedThreads|generalComments|failingChecks|conflict|intervalSec)\}/g;
+const TEMPLATE_VAR_RE = /\{(owner|repo|number|host|prLabel|prUrl|unresolvedThreads|generalComments|failingChecks|conflict|intervalSec)\}/g;
 
 /** Non-global version for .test() checks. The /g flag causes .test() to
  *  advance lastIndex across successive calls, producing false negatives.
@@ -183,6 +184,8 @@ export function interpolateTemplate(template: string, vars: TemplateVars): strin
 				return vars.host;
 			case "prLabel":
 				return vars.prLabel;
+			case "prUrl":
+				return vars.prUrl;
 			case "unresolvedThreads":
 				return vars.unresolvedThreads !== undefined ? String(vars.unresolvedThreads) : match;
 			case "generalComments":
