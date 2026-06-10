@@ -304,7 +304,6 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 
 	// For testing: allows pointing at a mock server
 	let mockBaseUrl: string | undefined = process.env.GHPR_MOCK_BASE_URL;
-	const NO_AGENT = !!process.env.PI_GHPR_NO_AGENT;
 
 	// For testing: allows reducing the polling interval
 	const MOCK_INTERVAL_SECS = process.env.GHPR_MONITOR_INTERVAL_SECS ? parseInt(process.env.GHPR_MONITOR_INTERVAL_SECS, 10) : undefined;
@@ -354,8 +353,6 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 	 *    session for event sourcing and rendering via the registered message renderer.
 	 *    When a UserMessage is also being sent (normal agent mode), display:false prevents
 	 *    a duplicate visible message — the UserMessage already appears in the TUI.
-	 *    In NO_AGENT mode (no UserMessage), display:true renders the CustomMessage in
-	 *    the TUI as the only visible notification.
 	 *
 	 * NOTE: CustomMessages with display:true are also converted to role: "user"
 	 * messages in the LLM context by pi-agent-core's convertToLlm(). This means they
@@ -365,7 +362,7 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 	 * instead — transient TUI notifications that never enter the session or LLM context.
 	 */
 	function sendPRNotification(concise: string, detailed: string, options?: { deliverAs?: "steer" | "followUp"; host?: string }) {
-		const delivery = NO_AGENT ? undefined : (options?.deliverAs ?? "steer");
+		const delivery = options?.deliverAs ?? "steer";
 		const linkifyHost = options?.host ?? "github.com";
 		const linkifiedDetailed = linkifyPRRefs(detailed, linkifyHost);
 		const linkifiedConcise = linkifyPRRefs(concise, linkifyHost);
@@ -389,7 +386,7 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 		// Emit a CustomMessage for the registered message renderer.
 		// When a UserMessage is also being sent (delivery is set), use display:false
 		// to avoid a duplicate visible message — the UserMessage already appears in
-		// the TUI. When there is no UserMessage (NO_AGENT mode), use display:true
+		// the TUI. When a UserMessage is also being sent (delivery is set), use display:false
 		// so the CustomMessage is the visible notification.
 		pi.sendMessage({
 			customType: "ghpr-monitor",
@@ -799,11 +796,7 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 			// to monitor the current PR. The LLM will determine which PR and
 			// invoke the ghpr-monitor tool itself. This triggers an agent turn.
 			if (raw === "!" || raw.toLowerCase() === "start") {
-				if (NO_AGENT) {
-					ctx.ui.notify("Monitor the current pull request using ghpr-monitor.", "info");
-				} else {
-					pi.sendUserMessage("Monitor the current pull request using ghpr-monitor.", { deliverAs: "steer" });
-				}
+				pi.sendUserMessage("Monitor the current pull request using ghpr-monitor.", { deliverAs: "steer" });
 				return;
 			}
 
@@ -926,7 +919,7 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 					ctx.ui.notify(result.message, "success");
 				}
 				if (steerMessage) {
-					pi.sendUserMessage(steerMessage, NO_AGENT ? {} : { deliverAs: "steer" });
+					pi.sendUserMessage(steerMessage, { deliverAs: "steer" });
 				}
 				return;
 			}
@@ -979,7 +972,7 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 					ctx.ui.notify(result.message, "success");
 				}
 				if (steerMessage) {
-					pi.sendUserMessage(steerMessage, NO_AGENT ? {} : { deliverAs: "steer" });
+					pi.sendUserMessage(steerMessage, { deliverAs: "steer" });
 				}
 				return;
 			}
