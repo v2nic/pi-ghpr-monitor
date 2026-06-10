@@ -1,11 +1,13 @@
 /**
- * Unit tests for the /ghpr-monitor no-args behavior.
+ * Unit tests for the /ghpr-monitor no-args behavior and status subcommand.
  *
- * When /ghpr-monitor is invoked without arguments (or with just "on") and
- * no monitor is running, the extension shows a usage hint via ctx.ui.notify()
- * only — without sending a steering message or triggering an agent turn.
+ * When /ghpr-monitor is invoked without arguments (or with just "on"):
+ * - If monitors are running, shows current status via ctx.ui.notify
+ * - If no monitors are running, shows a usage hint via ctx.ui.notify (no steer, no agent turn)
  *
- * When monitors are already running, it shows the current status.
+ * The /ghpr-monitor status subcommand displays PR status to both the TUI
+ * and the LLM context without triggering an agent turn, using pi.sendMessage
+ * with deliverAs: "nextTurn" (like !command behavior).
  */
 
 import { describe, it, expect } from "vitest";
@@ -80,9 +82,83 @@ describe("no-args behavior without steer message", () => {
 		expect(descMatch![0]).toContain("status/usage");
 	});
 
-	it("header comment documents no-args behavior", () => {
+	it("header comment documents no-args and status behavior", () => {
 		const headerComment = src.slice(0, src.indexOf("// -----------") > 0 ? src.indexOf("// -----------") : 2000);
 		expect(headerComment).toContain("no args = show status/usage");
+	});
+});
+
+describe("/ghpr-monitor status subcommand", () => {
+	it("recognizes 'status' as a subcommand", () => {
+		expect(src).toContain('raw.toLowerCase() === "status"');
+	});
+
+	it("has 'status' in command completions", () => {
+		const completionsIdx = src.indexOf("getArgumentCompletions");
+		expect(completionsIdx).toBeGreaterThan(-1);
+		const completionsBlock = src.slice(completionsIdx, completionsIdx + 400);
+		expect(completionsBlock).toContain('"status"');
+	});
+
+	it("uses pi.sendMessage with deliverAs 'nextTurn' to avoid triggering a turn", () => {
+		const statusBlock = src.slice(
+			src.indexOf('raw.toLowerCase() === "status"'),
+			src.indexOf("// Parse: check [PR identifier]"),
+		);
+		expect(statusBlock).toContain("pi.sendMessage");
+		expect(statusBlock).toContain('"nextTurn"');
+		// Must NOT use pi.sendUserMessage (which always triggers a turn)
+		expect(statusBlock).not.toContain("pi.sendUserMessage");
+	});
+
+	it("uses display true for TUI rendering", () => {
+		const statusBlock = src.slice(
+			src.indexOf('raw.toLowerCase() === "status"'),
+			src.indexOf("// Parse: check [PR identifier]"),
+		);
+		expect(statusBlock).toContain("display: true");
+	});
+
+	it("uses the registered ghpr-monitor message renderer", () => {
+		const statusBlock = src.slice(
+			src.indexOf('raw.toLowerCase() === "status"'),
+			src.indexOf("// Parse: check [PR identifier]"),
+		);
+		expect(statusBlock).toContain('customType: "ghpr-monitor"');
+	});
+
+	it("shows usage hint when no monitors are running", () => {
+		const statusBlock = src.slice(
+			src.indexOf('raw.toLowerCase() === "status"'),
+			src.indexOf("// Parse: check [PR identifier]"),
+		);
+		expect(statusBlock).toContain("No PR monitors running");
+		expect(statusBlock).toContain("ctx.ui.notify");
+	});
+
+	it("uses shared buildDetailedStatusLines helper (no duplication)", () => {
+		// The shared helper should exist and be used by both the command
+		// handler and the tool action='status'
+		expect(src).toContain("function buildDetailedStatusLines()");
+		// The command handler should call the helper
+		const statusCmdBlock = src.slice(
+			src.indexOf('raw.toLowerCase() === "status"'),
+			src.indexOf("// Parse: check [PR identifier]"),
+		);
+		expect(statusCmdBlock).toContain("buildDetailedStatusLines()");
+		// The tool action='status' should also call the helper
+		const toolStatusIdx = src.indexOf('case "status"');
+		const toolStatusBlock = src.slice(toolStatusIdx, toolStatusIdx + 500);
+		expect(toolStatusBlock).toContain("buildDetailedStatusLines()");
+	});
+
+	it("includes concise status for the TUI message renderer", () => {
+		const statusBlock = src.slice(
+			src.indexOf('raw.toLowerCase() === "status"'),
+			src.indexOf("// Parse: check [PR identifier]"),
+		);
+		expect(statusBlock).toContain("conciseStatus");
+		expect(statusBlock).toContain("concise:");
 	});
 });
 
