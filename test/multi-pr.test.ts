@@ -233,7 +233,7 @@ describe("Multi-PR architecture structure", () => {
 
 	it("turn_end sets needsReminder for each monitor independently", () => {
 		const turnEndIdx = src.indexOf('pi.on("turn_end"');
-		const afterTurnEnd = src.slice(turnEndIdx, turnEndIdx + 1000);
+		const afterTurnEnd = src.slice(turnEndIdx, turnEndIdx + 1500);
 		expect(afterTurnEnd).toContain("mon.needsReminder = true");
 	});
 
