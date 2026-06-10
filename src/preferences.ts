@@ -74,7 +74,7 @@ export const PreferencesSchema = Type.Object(
 		descriptionStaleness: Type.Optional(
 			Type.String({
 				description:
-					"Prompt override for description staleness nudge when new commits are detected. Variables: {owner}, {repo}, {number}, {host}, {prLabel}, {commitOid}, {commitShortOid}, {commitUrl}",
+					"Prompt override for description staleness nudge when new commits are detected. Variables: {owner}, {repo}, {number}, {host}, {prLabel}, {prUrl}, {commitOid}, {commitShortOid}, {commitUrl}",
 			}),
 		),
 	},
