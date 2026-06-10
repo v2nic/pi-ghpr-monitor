@@ -205,7 +205,7 @@ export function interpolateTemplate(template: string, vars: TemplateVars): strin
 			case "path":
 				return vars.path ?? match;
 			case "line":
-				return vars.line !== undefined ? String(vars.line) : match;
+				return vars.line != null ? String(vars.line) : match;
 			default:
 				return match;
 		}
