@@ -65,7 +65,6 @@ describe("!/start subcommand injects steer prompt", () => {
 		expect(handlerBlock).toContain("pi.sendUserMessage");
 		expect(handlerBlock).toContain("Monitor the current pull request");
 		expect(handlerBlock).toContain('deliverAs: "steer"');
-		// NO_AGENT should NOT be referenced — always send the steer prompt
 		expect(handlerBlock).not.toContain("NO_AGENT");
 		expect(handlerBlock).not.toContain("ctx.ui.notify");
 	});
