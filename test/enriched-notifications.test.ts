@@ -810,7 +810,7 @@ describe("edge cases for enriched notifications", () => {
 					path: "src/app.ts",
 					line: 10,
 					allComments: [
-						{ id: "RC_1", fullDatabaseId: "30", author: "a", body: "Code comment", fullBody: "Code comment with details", path: "src/app.ts", line: 10 },
+						{ id: "RC_1", databaseId: "30", author: "a", body: "Code comment", fullBody: "Code comment with details", path: "src/app.ts", line: 10 },
 					],
 				},
 				{
