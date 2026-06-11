@@ -628,7 +628,7 @@ export function formatActionableItems(status: PRStatus, config: MonitorConfig, p
  * URLs with OSC 8 hyperlinks so they are clickable in the terminal.
  *
  * Three patterns are linkified:
- * 1. `https://host/owner/repo/pull/number` → clickable link (display: URL)
+ * 1. `https://host/owner/repo/pull/number` → clickable link (display: owner/repo#number)
  * 2. `https://host/owner/repo/commit/<sha>` → clickable link
  *    (display: short 7-char SHA, so the link reads as e.g. `abc1234`)
  * 3. `owner/repo#number` → clickable link using defaultHost
@@ -653,24 +653,39 @@ export function linkifyPRRefs(text: string, defaultHost: string = "github.com"):
 	// Extract existing OSC 8 sequences to avoid double-linkification.
 	// Replace them with unique NUL-delimited placeholders, run the regex
 	// replacements on the clean text, then restore the originals.
+	// After each pass that creates new OSC 8 sequences, we re-extract
+	// them into placeholders so subsequent passes can't match inside them.
 	const oscSequences: string[] = [];
 	// Match complete OSC 8 hyperlinks: \x1b]8;;URL\x1b\\DISPLAY\x1b]8;;\x1b\\
 	const oscPattern = /\x1b\]8;;[^\x1b]*\x1b\\[^\x1b]*\x1b\]8;;\x1b\\/g;
-	text = text.replace(oscPattern, (match) => {
-		const placeholder = `\x00OSC${oscSequences.length}\x00`;
-		oscSequences.push(match);
-		return placeholder;
-	});
+
+	function extractOsc(): void {
+		text = text.replace(oscPattern, (match) => {
+			const placeholder = `\x00OSC${oscSequences.length}\x00`;
+			oscSequences.push(match);
+			return placeholder;
+		});
+	}
+
+	// Extract any pre-existing OSC 8 sequences
+	extractOsc();
 
 	// First pass: wrap existing full PR URLs in OSC 8 hyperlinks.
 	// Matches https://github.com/owner/repo/pull/123 (or any host)
+	// Uses owner/repo#number as the display text (not the full URL) to avoid
+	// triplicating the URL in terminals that don't support OSC 8 hyperlinks.
 	// Word boundary (\b) after the number prevents trailing punctuation
 	// (e.g. "...", ".", ",") from being captured as part of the URL.
 	const urlPattern = /https?:\/\/([^\/\s]+)\/([^\/\s]+)\/([^\/\s]+)\/pull\/([0-9]+)\b/g;
 	text = text.replace(urlPattern, (_match, host: string, owner: string, repo: string, number: string) => {
 		const url = `https://${host}/${owner}/${repo}/pull/${number}`;
-		return `\x1b]8;;${url}\x1b\\${url}\x1b]8;;\x1b\\`;
+		const label = `${owner}/${repo}#${number}`;
+		return `\x1b]8;;${url}\x1b\\${label}\x1b]8;;\x1b\\`;
 	});
+
+	// Re-extract newly created OSC 8 sequences so the next pass can't
+	// match the owner/repo#number display text inside them.
+	extractOsc();
 
 	// Second pass: wrap commit URLs in OSC 8 hyperlinks with the short
 	// 7-character SHA as the visible display text. This produces compact
@@ -683,6 +698,9 @@ export function linkifyPRRefs(text: string, defaultHost: string = "github.com"):
 		const shortSha = sha.slice(0, 7);
 		return `\x1b]8;;${url}\x1b\\${shortSha}\x1b]8;;\x1b\\`;
 	});
+
+	// Re-extract newly created OSC 8 sequences again.
+	extractOsc();
 
 	// Third pass: replace owner/repo#number patterns with OSC 8 hyperlinks.
 	// These link to defaultHost (default: github.com).

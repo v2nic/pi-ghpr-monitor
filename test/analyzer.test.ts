@@ -1049,7 +1049,7 @@ describe("linkifyPRRefs", () => {
 		const input = "📡 https://github.com/mobilityhouse/vgi-na-masscec/pull/366";
 		const result = linkifyPRRefs(input);
 		expect(result).toBe(
-			`📡 ${linkify("https://github.com/mobilityhouse/vgi-na-masscec/pull/366", "https://github.com/mobilityhouse/vgi-na-masscec/pull/366")}`,
+			`📡 ${linkify("https://github.com/mobilityhouse/vgi-na-masscec/pull/366", "mobilityhouse/vgi-na-masscec#366")}`,
 		);
 	});
 
@@ -1057,7 +1057,7 @@ describe("linkifyPRRefs", () => {
 		const input = "📡 https://github.corp.com/owner/repo/pull/42";
 		const result = linkifyPRRefs(input);
 		expect(result).toBe(
-			`📡 ${linkify("https://github.corp.com/owner/repo/pull/42", "https://github.corp.com/owner/repo/pull/42")}`,
+			`📡 ${linkify("https://github.corp.com/owner/repo/pull/42", "owner/repo#42")}`,
 		);
 	});
 
@@ -1067,7 +1067,7 @@ describe("linkifyPRRefs", () => {
 		const input = "Check https://github.com/v2nic/gh-pr-review/pull/42 and v2nic/gh-pr-review#42";
 		const result = linkifyPRRefs(input);
 		expect(result).toBe(
-			`Check ${linkify("https://github.com/v2nic/gh-pr-review/pull/42", "https://github.com/v2nic/gh-pr-review/pull/42")} and ${linkify("https://github.com/v2nic/gh-pr-review/pull/42", "v2nic/gh-pr-review#42")}`,
+			`Check ${linkify("https://github.com/v2nic/gh-pr-review/pull/42", "v2nic/gh-pr-review#42")} and ${linkify("https://github.com/v2nic/gh-pr-review/pull/42", "v2nic/gh-pr-review#42")}`,
 		);
 	});
 
@@ -1103,9 +1103,9 @@ describe("linkifyPRRefs", () => {
 	it("linkifies PR URLs with http scheme (normalizes to https)", () => {
 		const input = "📡 http://github.corp.com/owner/repo/pull/42";
 		const result = linkifyPRRefs(input);
-		// Both the href and display text use https (normalized from http)
+		// The href uses https (normalized from http), display text uses owner/repo#number shorthand
 		expect(result).toBe(
-			`📡 ${linkify("https://github.corp.com/owner/repo/pull/42", "https://github.corp.com/owner/repo/pull/42")}`,
+			`📡 ${linkify("https://github.corp.com/owner/repo/pull/42", "owner/repo#42")}`,
 		);
 	});
 
@@ -1113,7 +1113,7 @@ describe("linkifyPRRefs", () => {
 		const input = "📡 https://github.com/mobilityhouse/vgi-na-masscec/pull/366 ⚠️💬❌";
 		const result = linkifyPRRefs(input);
 		expect(result).toBe(
-			`📡 ${linkify("https://github.com/mobilityhouse/vgi-na-masscec/pull/366", "https://github.com/mobilityhouse/vgi-na-masscec/pull/366")} ⚠️💬❌`,
+			`📡 ${linkify("https://github.com/mobilityhouse/vgi-na-masscec/pull/366", "mobilityhouse/vgi-na-masscec#366")} ⚠️💬❌`,
 		);
 	});
 
@@ -1138,7 +1138,7 @@ describe("linkifyPRRefs", () => {
 		const input = "Check owner/repo#42 and https://github.corp.com/other/repo/pull/99";
 		const result = linkifyPRRefs(input, "github.corp.com");
 		expect(result).toBe(
-			`Check ${linkify("https://github.corp.com/owner/repo/pull/42", "owner/repo#42")} and ${linkify("https://github.corp.com/other/repo/pull/99", "https://github.corp.com/other/repo/pull/99")}`,
+			`Check ${linkify("https://github.corp.com/owner/repo/pull/42", "owner/repo#42")} and ${linkify("https://github.corp.com/other/repo/pull/99", "other/repo#99")}`,
 		);
 	});
 
