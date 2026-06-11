@@ -384,10 +384,10 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 		//
 		// Both the UserMessage (detailed) and the CustomMessage (concise) are
 		// linkified with OSC 8 hyperlinks so PR references are clickable in
-		// terminals that support the protocol. In terminals that don't support
-		// OSC 8, the display text (e.g. "owner/repo#59") is shown as plain text
-		// and the link URL is hidden — this is why prLabel must be used instead
-		// of prUrl in notification text.
+		// terminals that support the protocol. The UserMessageComponent renderer
+		// uses pi-tui's Markdown component which handles OSC 8 via
+		// wrapTextWithAnsi(). The CustomMessage renderer uses pi-tui's Text
+		// component which also handles OSC 8 via wrapTextWithAnsi().
 		if (delivery) {
 			pi.sendUserMessage(linkifiedDetailed, { deliverAs: delivery });
 		}
