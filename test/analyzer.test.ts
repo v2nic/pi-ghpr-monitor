@@ -47,9 +47,9 @@ describe("countUnresolvedThreads", () => {
 		const pr = makeMockPR({
 			reviewThreads: {
 				nodes: [
-					{ id: "1", databaseId: 101, isResolved: false, comments: { nodes: [] } },
-					{ id: "2", databaseId: 102, isResolved: true, comments: { nodes: [] } },
-					{ id: "3", databaseId: 103, isResolved: false, comments: { nodes: [] } },
+					{ id: "1", isResolved: false, comments: { nodes: [] } },
+					{ id: "2", isResolved: true, comments: { nodes: [] } },
+					{ id: "3", isResolved: false, comments: { nodes: [] } },
 				],
 			},
 		});
@@ -663,8 +663,8 @@ describe("formatStatusUpdate with detail", () => {
 			lastCommentBySelf: false,
 			lastCommitOid: "",
 			threadDetails: [
-				{ id: "PRRT_1", databaseId: 201, isResolved: false, lastCommentAuthor: "reviewer", lastCommentBody: "Please fix this typo" },
-				{ id: "PRRT_2", databaseId: 202, isResolved: false, lastCommentAuthor: "bot", lastCommentBody: "Build failed" },
+				{ id: "PRRT_1", isResolved: false, lastCommentAuthor: "reviewer", lastCommentBody: "Please fix this typo" },
+				{ id: "PRRT_2", isResolved: false, lastCommentAuthor: "bot", lastCommentBody: "Build failed" },
 			],
 			commentDetails: [],
 			checkDetails: [],
@@ -688,7 +688,7 @@ describe("formatStatusUpdate with detail", () => {
 			lastCommitOid: "",
 			threadDetails: [],
 			commentDetails: [
-				{ id: "C_1", databaseId: 301, author: "teammate", body: "Can you add tests?" },
+				{ id: "C_1", databaseId: "301", author: "teammate", body: "Can you add tests?" },
 			],
 			checkDetails: [],
 		};
@@ -732,7 +732,7 @@ describe("formatStatusUpdate with detail", () => {
 			lastCommitOid: "",
 			threadDetails: [],
 			commentDetails: [
-				{ id: "C_1", databaseId: 302, author: "user", body: longBody },
+				{ id: "C_1", databaseId: "302", author: "user", body: longBody },
 			],
 			checkDetails: [],
 		};
@@ -754,7 +754,7 @@ describe("formatStatusUpdate with detail", () => {
 			lastCommitOid: "",
 			threadDetails: [],
 			commentDetails: [
-				{ id: "C_1", databaseId: 303, author: "v2nic", body: multilineBody },
+				{ id: "C_1", databaseId: "303", author: "v2nic", body: multilineBody },
 			],
 			checkDetails: [],
 		};
@@ -805,21 +805,19 @@ describe("acknowledged comments (THUMBS_UP reactions)", () => {
 				nodes: [
 					{
 						id: "t-1",
-						databaseId: 501,
 						isResolved: false,
 						comments: {
 							nodes: [
-								{ id: "tc-1", databaseId: 601, body: "Fix this", author: { login: "reviewer" }, createdAt: "2024-01-01T00:00:00Z", reactions: { nodes: [] } },
+								{ id: "tc-1", fullDatabaseId: "601", body: "Fix this", author: { login: "reviewer" }, createdAt: "2024-01-01T00:00:00Z", reactions: { nodes: [] } },
 							],
 						},
 					},
 					{
 						id: "t-2",
-						databaseId: 502,
 						isResolved: false,
 						comments: {
 							nodes: [
-								{ id: "tc-2", databaseId: 602, body: "Looks good now", author: { login: "dev" }, createdAt: "2024-01-01T00:01:00Z", reactions: { nodes: [{ content: "THUMBS_UP" }] } },
+								{ id: "tc-2", fullDatabaseId: "602", body: "Looks good now", author: { login: "dev" }, createdAt: "2024-01-01T00:01:00Z", reactions: { nodes: [{ content: "THUMBS_UP" }] } },
 							],
 						},
 					},
@@ -1261,50 +1259,19 @@ describe("snapshotPR extracts lastCommitOid", () => {
 	});
 });
 
-describe("snapshotPR maps databaseId from GraphQL", () => {
-	it("maps thread databaseId to ThreadSummary.databaseId", () => {
-		const pr = makeMockPR({
-			reviewThreads: {
-				nodes: [
-					{
-						id: "PRRT_abc123",
-						databaseId: 98765,
-						isResolved: false,
-						comments: {
-							nodes: [
-								{
-									id: "RC_xyz789",
-									databaseId: 12345,
-									body: "A review comment",
-									author: { login: "reviewer" },
-									createdAt: "2024-01-01T00:00:00Z",
-									reactions: { nodes: [] },
-									path: "src/main.ts",
-									line: 42,
-								},
-							],
-						},
-					},
-				],
-			},
-		});
-		const status = snapshotPR(pr);
-		expect(status.threadDetails[0].databaseId).toBe(98765);
-	});
-
-	it("maps comment databaseId to CommentSummary.databaseId for review comments", () => {
+describe("snapshotPR maps databaseId/fullDatabaseId from GraphQL", () => {
+	it("maps review comment fullDatabaseId to CommentSummary.databaseId", () => {
 		const pr = makeMockPR({
 			reviewThreads: {
 				nodes: [
 					{
 						id: "PRRT_abc",
-						databaseId: 99,
 						isResolved: false,
 						comments: {
 							nodes: [
 								{
 									id: "RC_xyz",
-									databaseId: 12345,
+									fullDatabaseId: "12345",
 									body: "A review comment",
 									author: { login: "reviewer" },
 									createdAt: "2024-01-01T00:00:00Z",
@@ -1319,10 +1286,10 @@ describe("snapshotPR maps databaseId from GraphQL", () => {
 			},
 		});
 		const status = snapshotPR(pr);
-		expect(status.threadDetails[0].allComments![0].databaseId).toBe(12345);
+		expect(status.threadDetails[0].allComments![0].databaseId).toBe("12345");
 	});
 
-	it("maps comment databaseId to CommentSummary.databaseId for general comments", () => {
+	it("maps general comment databaseId to CommentSummary.databaseId", () => {
 		const pr = makeMockPR({
 			comments: {
 				nodes: [
@@ -1338,15 +1305,44 @@ describe("snapshotPR maps databaseId from GraphQL", () => {
 			},
 		});
 		const status = snapshotPR(pr);
-		expect(status.commentDetails[0].databaseId).toBe(54321);
+		expect(status.commentDetails[0].databaseId).toBe("54321");
+	});
+
+	it("prefers fullDatabaseId over databaseId for review thread comments", () => {
+		const pr = makeMockPR({
+			reviewThreads: {
+				nodes: [
+					{
+						id: "PRRT_mixed",
+						isResolved: false,
+						comments: {
+							nodes: [
+								{
+									id: "RC_mixed",
+									fullDatabaseId: "99999",
+									databaseId: 11111,
+									body: "A review comment",
+									author: { login: "reviewer" },
+									createdAt: "2024-01-01T00:00:00Z",
+									reactions: { nodes: [] },
+									path: "src/main.ts",
+									line: 42,
+								},
+							],
+						},
+					},
+				],
+			},
+		});
+		const status = snapshotPR(pr);
+		expect(status.threadDetails[0].allComments![0].databaseId).toBe("99999");
 	});
 });
 
-describe("formatThreadDetailBlock includes databaseId", () => {
-	it("includes thread databaseId in header", () => {
+describe("formatThreadDetailBlock", () => {
+	it("includes thread id in header with location", () => {
 		const thread: ThreadSummary = {
 			id: "PRRT_abc",
-			databaseId: 98765,
 			isResolved: false,
 			lastCommentAuthor: "reviewer",
 			lastCommentBody: "Fix this",
@@ -1354,7 +1350,7 @@ describe("formatThreadDetailBlock includes databaseId", () => {
 			path: "src/main.ts",
 			line: 42,
 			allComments: [
-				{ id: "RC_1", databaseId: 11111, author: "reviewer", body: "Fix this", fullBody: "Fix this bug", path: "src/main.ts", line: 42 },
+				{ id: "RC_1", databaseId: "11111", author: "reviewer", body: "Fix this", fullBody: "Fix this bug", path: "src/main.ts", line: 42 },
 			],
 		};
 		const result = formatAgentNotification({
@@ -1379,7 +1375,7 @@ describe("formatThreadDetailBlock includes databaseId", () => {
 			debounceSec: 30,
 		});
 		expect(result).not.toBeNull();
-		expect(result!.detailed).toContain("Thread PRRT_abc (databaseId: 98765) (src/main.ts:42)");
+		expect(result!.detailed).toContain("Thread PRRT_abc (src/main.ts:42)");
 		expect(result!.detailed).toContain("(id: RC_1, databaseId: 11111)");
 	});
 });
@@ -1397,7 +1393,7 @@ describe("formatCommentDetailBlock includes databaseId", () => {
 			lastCommitOid: "",
 			threadDetails: [],
 			commentDetails: [
-				{ id: "IC_1", databaseId: 54321, author: "bot", body: "Deploy done", fullBody: "Deploy notification" },
+				{ id: "IC_1", databaseId: "54321", author: "bot", body: "Deploy done", fullBody: "Deploy notification" },
 			],
 			checkDetails: [],
 		}, {
@@ -1414,7 +1410,7 @@ describe("formatCommentDetailBlock includes databaseId", () => {
 	});
 });
 
-describe("formatThreadDetails concise includes databaseId", () => {
+describe("formatThreadDetails concise", () => {
 	const config: MonitorConfig = {
 		owner: "owner",
 		repo: "repo",
@@ -1425,7 +1421,7 @@ describe("formatThreadDetails concise includes databaseId", () => {
 		debounceSec: 30,
 	};
 
-	it("includes thread databaseId in concise one-liner", () => {
+	it("includes thread id in concise one-liner", () => {
 		const status: PRStatus = {
 			unresolvedThreads: 1,
 			generalComments: 0,
@@ -1436,17 +1432,16 @@ describe("formatThreadDetails concise includes databaseId", () => {
 			lastCommentBySelf: false,
 			lastCommitOid: "",
 			threadDetails: [
-				{ id: "PRRT_abc", databaseId: 98765, isResolved: false, lastCommentAuthor: "reviewer", lastCommentBody: "Fix this" },
+				{ id: "PRRT_abc", isResolved: false, lastCommentAuthor: "reviewer", lastCommentBody: "Fix this" },
 			],
 			commentDetails: [],
 			checkDetails: [],
 		};
 		const result = formatStatusUpdate(null, status, config);
-		expect(result).toContain("databaseId: 98765");
 		expect(result).toContain("PRRT_abc");
 	});
 
-	it("includes comment databaseId in concise one-liner", () => {
+	it("includes comment id and databaseId in concise one-liner", () => {
 		const status: PRStatus = {
 			unresolvedThreads: 0,
 			generalComments: 1,
@@ -1458,7 +1453,7 @@ describe("formatThreadDetails concise includes databaseId", () => {
 			lastCommitOid: "",
 			threadDetails: [],
 			commentDetails: [
-				{ id: "IC_1", databaseId: 54321, author: "bot", body: "Deploy done" },
+				{ id: "IC_1", databaseId: "54321", author: "bot", body: "Deploy done" },
 			],
 			checkDetails: [],
 		};

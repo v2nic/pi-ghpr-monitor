@@ -20,7 +20,10 @@ export interface ReactionNode {
 
 export interface CommentNode {
 	id: string;
-	databaseId: number;
+	/** REST API numeric ID. Present on IssueComment (general PR comments). */
+	databaseId?: number;
+	/** REST API numeric ID (BigInt). Present on PullRequestReviewComment (thread comments). */
+	fullDatabaseId?: string;
 	body: string;
 	author: { login: string };
 	createdAt: string;
@@ -33,7 +36,6 @@ export interface CommentNode {
 
 export interface ReviewThreadNode {
 	id: string;
-	databaseId: number;
 	isResolved: boolean;
 	comments: { nodes: CommentNode[] };
 }
@@ -88,7 +90,6 @@ export interface PullRequestData {
 
 export interface ThreadSummary {
 	id: string;
-	databaseId: number;
 	isResolved: boolean;
 	lastCommentAuthor: string;
 	lastCommentBody: string;
@@ -104,7 +105,8 @@ export interface ThreadSummary {
 
 export interface CommentSummary {
 	id: string;
-	databaseId: number;
+	/** REST API numeric ID (from IssueComment.databaseId or PullRequestReviewComment.fullDatabaseId) */
+	databaseId: string;
 	author: string;
 	body: string;
 	/** Untruncated comment body (for agent context) */
@@ -283,7 +285,6 @@ export function snapshotPR(pr: PullRequestData): PRStatus {
 			const first = comments[0];
 			return {
 				id: t.id,
-				databaseId: t.databaseId,
 				isResolved: t.isResolved,
 				lastCommentAuthor: last?.author?.login ?? "",
 				lastCommentBody: firstLine(last?.body, 120),
@@ -292,7 +293,7 @@ export function snapshotPR(pr: PullRequestData): PRStatus {
 				line: first?.line,
 				allComments: comments.map((c: CommentNode) => ({
 					id: c.id,
-					databaseId: c.databaseId,
+					databaseId: String(c.fullDatabaseId ?? c.databaseId ?? ''),
 					author: c.author?.login ?? "",
 					body: firstLine(c.body, 120),
 					fullBody: c.body,
@@ -306,7 +307,7 @@ export function snapshotPR(pr: PullRequestData): PRStatus {
 		.filter((c: CommentNode) => !isAcknowledged(c))
 		.map((c: CommentNode) => ({
 			id: c.id,
-			databaseId: c.databaseId,
+			databaseId: String(c.databaseId ?? c.fullDatabaseId ?? ''),
 			author: c.author?.login ?? "",
 			body: firstLine(c.body, 120),
 			fullBody: c.body,
@@ -503,7 +504,7 @@ function formatThreadDetails(threads: ThreadSummary[], prev?: ThreadSummary[]): 
 	const prevIds = new Set((prev ?? []).map(t => t.id));
 	return threads
 		.filter(t => !prevIds.has(t.id) || !prev) // show new threads only (or all if no prev)
-		.map(t => `  - [${t.lastCommentAuthor}] ${firstLine(t.lastCommentBody, 120)} (id: ${t.id}, databaseId: ${t.databaseId})`)
+		.map(t => `  - [${t.lastCommentAuthor}] ${firstLine(t.lastCommentBody, 120)} (id: ${t.id})`)
 		.join("\n");
 }
 
@@ -721,8 +722,8 @@ function formatThreadDetailBlock(thread: ThreadSummary): string {
 		: undefined;
 
 	const header = location
-		? `Thread ${thread.id} (databaseId: ${thread.databaseId}) (${location})`
-		: `Thread ${thread.id} (databaseId: ${thread.databaseId})`;
+		? `Thread ${thread.id} (${location})`
+		: `Thread ${thread.id}`;
 	lines.push(header + ":");
 
 	if (thread.allComments && thread.allComments.length > 0) {

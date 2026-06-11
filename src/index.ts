@@ -72,10 +72,9 @@ const AWAIT_QUERY = `query AwaitPR(
       reviewThreads(last: $lastThreads) {
         nodes {
           id
-          databaseId
           isResolved
           comments(last: $lastThreadComments) {
-            nodes { id databaseId body author { login } createdAt path line reactions(content: THUMBS_UP, first: 1) { nodes { content } } }
+            nodes { id fullDatabaseId body author { login } createdAt path line reactions(content: THUMBS_UP, first: 1) { nodes { content } } }
           }
         }
       }

@@ -76,7 +76,6 @@ describe("snapshotPR enriches ThreadSummary and CommentSummary", () => {
 				nodes: [
 					{
 						id: "PRRT_1",
-						databaseId: 1,
 						isResolved: false,
 						comments: {
 							nodes: [
@@ -148,7 +147,6 @@ describe("snapshotPR enriches ThreadSummary and CommentSummary", () => {
 				nodes: [
 					{
 						id: "PRRT_1",
-						databaseId: 2,
 						isResolved: false,
 						comments: {
 							nodes: [
@@ -197,7 +195,6 @@ describe("snapshotPR enriches ThreadSummary and CommentSummary", () => {
 				nodes: [
 					{
 						id: "PRRT_1",
-						databaseId: 3,
 						isResolved: false,
 						comments: {
 							nodes: [
@@ -228,7 +225,6 @@ describe("snapshotPR enriches ThreadSummary and CommentSummary", () => {
 				nodes: [
 					{
 						id: "PRRT_1",
-						databaseId: 4,
 						isResolved: false,
 						comments: {
 							nodes: [
@@ -276,7 +272,6 @@ describe("formatAgentNotification", () => {
 			threadDetails: [
 				{
 					id: "PRRT_kwDOO45Fys6AY8FC",
-					databaseId: 5,
 					isResolved: false,
 					lastCommentAuthor: "copilot-pull-request-reviewer",
 					lastCommentBody: "PR description says the frontend already has pnpm.onlyBuiltDependencies configured, but frontend/package.json curren…",
@@ -345,7 +340,6 @@ describe("formatAgentNotification", () => {
 			threadDetails: [
 				{
 					id: "PRRT_1",
-					databaseId: 6,
 					isResolved: false,
 					lastCommentAuthor: "dev",
 					lastCommentBody: "Fixed in commit abc123",
@@ -378,7 +372,7 @@ describe("formatAgentNotification", () => {
 		expect(result).not.toBeNull();
 
 		// Detailed version shows both comments
-		expect(result!.detailed).toContain("Thread PRRT_1 (databaseId: 6) (src/auth/login.ts:42)");
+		expect(result!.detailed).toContain("Thread PRRT_1 (src/auth/login.ts:42)");
 		expect(result!.detailed).toContain("reviewer (src/auth/login.ts:42) (id: RC_1, databaseId: 31)");
 		expect(result!.detailed).toContain("authToken");
 		expect(result!.detailed).toContain("dev");
@@ -416,7 +410,6 @@ describe("formatAgentNotification", () => {
 			threadDetails: [
 				{
 					id: "PRRT_1",
-					databaseId: 7,
 					isResolved: false,
 					lastCommentAuthor: "reviewer",
 					lastCommentBody: "General review note",
@@ -430,10 +423,10 @@ describe("formatAgentNotification", () => {
 		expect(result).not.toBeNull();
 
 		// Should show thread ID without file location
-		expect(result!.detailed).toContain("Thread PRRT_1 (databaseId: 7):");
+		expect(result!.detailed).toContain("Thread PRRT_1:");
 		expect(result!.detailed).toContain("General review note with more context");
 		// Should NOT contain empty parentheses since there's no path
-		expect(result!.detailed).not.toContain("Thread PRRT_1 (databaseId: 7) ():");
+		expect(result!.detailed).not.toContain("Thread PRRT_1 ():");
 	});
 
 	it("handles thread with path but no line", () => {
@@ -442,7 +435,6 @@ describe("formatAgentNotification", () => {
 			threadDetails: [
 				{
 					id: "PRRT_1",
-					databaseId: 8,
 					isResolved: false,
 					lastCommentAuthor: "reviewer",
 					lastCommentBody: "File-level comment",
@@ -455,7 +447,7 @@ describe("formatAgentNotification", () => {
 
 		const result = formatAgentNotification(status, config);
 		expect(result).not.toBeNull();
-		expect(result!.detailed).toContain("Thread PRRT_1 (databaseId: 8) (README.md):");
+		expect(result!.detailed).toContain("Thread PRRT_1 (README.md):");
 	});
 
 	it("handles null line number", () => {
@@ -464,7 +456,6 @@ describe("formatAgentNotification", () => {
 			threadDetails: [
 				{
 					id: "PRRT_1",
-					databaseId: 9,
 					isResolved: false,
 					lastCommentAuthor: "reviewer",
 					lastCommentBody: "Outdated comment",
@@ -477,7 +468,7 @@ describe("formatAgentNotification", () => {
 
 		const result = formatAgentNotification(status, config);
 		expect(result).not.toBeNull();
-		expect(result!.detailed).toContain("Thread PRRT_1 (databaseId: 9) (src/utils.ts):");
+		expect(result!.detailed).toContain("Thread PRRT_1 (src/utils.ts):");
 	});
 
 	it("concise matches formatActionableItems output", () => {
@@ -486,8 +477,8 @@ describe("formatAgentNotification", () => {
 			hasConflicts: true,
 			failingChecks: ["ci/test"],
 			threadDetails: [
-				{ id: "PRRT_1", databaseId: 23, isResolved: false, lastCommentAuthor: "a", lastCommentBody: "Fix this" },
-				{ id: "PRRT_2", databaseId: 24, isResolved: false, lastCommentAuthor: "b", lastCommentBody: "And this" },
+				{ id: "PRRT_1", isResolved: false, lastCommentAuthor: "a", lastCommentBody: "Fix this" },
+				{ id: "PRRT_2", isResolved: false, lastCommentAuthor: "b", lastCommentBody: "And this" },
 			],
 			checkDetails: [{ name: "ci/test", conclusion: "FAILURE" }],
 		});
@@ -529,15 +520,15 @@ describe("formatAgentStatusUpdate", () => {
 	it("returns concise matching formatStatusUpdate", () => {
 		const prev = makeMockStatus({
 			unresolvedThreads: 1,
-			threadDetails: [{ id: "PRRT_1", databaseId: 25, isResolved: false, lastCommentAuthor: "a", lastCommentBody: "Fix" }],
+			threadDetails: [{ id: "PRRT_1", isResolved: false, lastCommentAuthor: "a", lastCommentBody: "Fix" }],
 			failingChecks: ["ci/test"],
 			checkDetails: [{ name: "ci/test", conclusion: "FAILURE" }],
 		});
 		const curr = makeMockStatus({
 			unresolvedThreads: 2,
 			threadDetails: [
-				{ id: "PRRT_1", databaseId: 26, isResolved: false, lastCommentAuthor: "a", lastCommentBody: "Fix" },
-				{ id: "PRRT_2", databaseId: 27, isResolved: false, lastCommentAuthor: "b", lastCommentBody: "Also fix", fullBody: "Also fix this other thing", path: "src/main.ts", line: 10 },
+				{ id: "PRRT_1", isResolved: false, lastCommentAuthor: "a", lastCommentBody: "Fix" },
+				{ id: "PRRT_2", isResolved: false, lastCommentAuthor: "b", lastCommentBody: "Also fix", fullBody: "Also fix this other thing", path: "src/main.ts", line: 10 },
 			],
 			failingChecks: ["ci/test"],
 			checkDetails: [{ name: "ci/test", conclusion: "FAILURE" }],
@@ -550,15 +541,14 @@ describe("formatAgentStatusUpdate", () => {
 	it("includes thread details for new threads in detailed output", () => {
 		const prev = makeMockStatus({
 			unresolvedThreads: 1,
-			threadDetails: [{ id: "PRRT_1", databaseId: 28, isResolved: false, lastCommentAuthor: "a", lastCommentBody: "Old thread" }],
+			threadDetails: [{ id: "PRRT_1", isResolved: false, lastCommentAuthor: "a", lastCommentBody: "Old thread" }],
 		});
 		const curr = makeMockStatus({
 			unresolvedThreads: 2,
 			threadDetails: [
-				{ id: "PRRT_1", databaseId: 29, isResolved: false, lastCommentAuthor: "a", lastCommentBody: "Old thread" },
+				{ id: "PRRT_1", isResolved: false, lastCommentAuthor: "a", lastCommentBody: "Old thread" },
 				{
 					id: "PRRT_2",
-					databaseId: 10,
 					isResolved: false,
 					lastCommentAuthor: "reviewer",
 					lastCommentBody: "New thread",
@@ -628,7 +618,6 @@ describe("formatAgentStatusUpdate", () => {
 			threadDetails: [
 				{
 					id: "PRRT_1",
-					databaseId: 11,
 					isResolved: false,
 					lastCommentAuthor: "a",
 					lastCommentBody: "Fix",
@@ -662,7 +651,6 @@ describe("real-world session: copilot review comment", () => {
 			threadDetails: [
 				{
 					id: "PRRT_kwDOO45Fys6AY8FC",
-					databaseId: 12,
 					isResolved: false,
 					lastCommentAuthor: "copilot-pull-request-reviewer",
 					lastCommentBody: "PR description says the frontend already has pnpm.onlyBuiltDependencies configured, but frontend/package.json curren…",
@@ -725,7 +713,6 @@ describe("consise is always a proper prefix/subset of detailed", () => {
 			threadDetails: [
 				{
 					id: "PRRT_1",
-					databaseId: 13,
 					isResolved: false,
 					lastCommentAuthor: "reviewer",
 					lastCommentBody: "Short",
@@ -773,7 +760,6 @@ describe("edge cases for enriched notifications", () => {
 			threadDetails: [
 				{
 					id: "PRRT_1",
-					databaseId: 14,
 					isResolved: false,
 					lastCommentAuthor: "reviewer",
 					lastCommentBody: "Fix this",
@@ -817,7 +803,6 @@ describe("edge cases for enriched notifications", () => {
 			threadDetails: [
 				{
 					id: "PRRT_1",
-					databaseId: 15,
 					isResolved: false,
 					lastCommentAuthor: "a",
 					lastCommentBody: "Code comment",
@@ -825,12 +810,11 @@ describe("edge cases for enriched notifications", () => {
 					path: "src/app.ts",
 					line: 10,
 					allComments: [
-						{ id: "RC_1", databaseId: 30, author: "a", body: "Code comment", fullBody: "Code comment with details", path: "src/app.ts", line: 10 },
+						{ id: "RC_1", fullDatabaseId: "30", author: "a", body: "Code comment", fullBody: "Code comment with details", path: "src/app.ts", line: 10 },
 					],
 				},
 				{
 					id: "PRRT_2",
-					databaseId: 16,
 					isResolved: false,
 					lastCommentAuthor: "b",
 					lastCommentBody: "General comment",
@@ -843,9 +827,9 @@ describe("edge cases for enriched notifications", () => {
 		const result = formatAgentNotification(status, config);
 		expect(result).not.toBeNull();
 		// Thread with path should show file location
-		expect(result!.detailed).toContain("Thread PRRT_1 (databaseId: 15) (src/app.ts:10)");
-		// Thread without path should show just thread ID and databaseId
-		expect(result!.detailed).toContain("Thread PRRT_2 (databaseId: 16):");
+		expect(result!.detailed).toContain("Thread PRRT_1 (src/app.ts:10)");
+		// Thread without path should show just thread ID
+		expect(result!.detailed).toContain("Thread PRRT_2:");
 		expect(result!.detailed).not.toContain("Thread PRRT_2 (databaseId: 16) ():");
 	});
 });
