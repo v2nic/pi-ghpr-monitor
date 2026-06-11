@@ -360,6 +360,13 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 	 * delivery mechanism because it creates a proper UserMessage with content control.
 	 * Error messages intentionally avoid pi.sendMessage() entirely and use uiCtx.notify()
 	 * instead — transient TUI notifications that never enter the session or LLM context.
+	 *
+	 * IMPORTANT: Always use prLabel (owner/repo#number) in notification text, never
+	 * the full PR URL (prUrl). linkifyPRRefs converts prLabel into a compact OSC 8
+	 * hyperlink (display: owner/repo#number, href: full URL). Using prUrl causes
+	 * triplicated URLs because linkifyPRRefs wraps the full URL in an OSC 8 hyperlink
+	 * whose display text contains the same URL, and if the terminal doesn't support
+	 * OSC 8, both the href and display text are shown as raw text.
 	 */
 	function sendPRNotification(concise: string, detailed: string, options?: { deliverAs?: "steer" | "followUp"; host?: string }) {
 		const delivery = options?.deliverAs ?? "steer";
@@ -377,8 +384,10 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 		//
 		// Both the UserMessage (detailed) and the CustomMessage (concise) are
 		// linkified with OSC 8 hyperlinks so PR references are clickable in
-		// terminals that support the protocol. The LLM sees the linkified text
-		// but the OSC 8 escape sequences are non-printing and harmless.
+		// terminals that support the protocol. In terminals that don't support
+		// OSC 8, the display text (e.g. "owner/repo#59") is shown as plain text
+		// and the link URL is hidden — this is why prLabel must be used instead
+		// of prUrl in notification text.
 		if (delivery) {
 			pi.sendUserMessage(linkifiedDetailed, { deliverAs: delivery });
 		}
@@ -585,11 +594,14 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 
 				// Check if PR was merged or closed
 				if (pr.state === "MERGED" || pr.state === "CLOSED") {
-					const prLabel = `${config.owner}/${config.repo}#${config.number}`;
-					const prUrl = `https://${config.host}/${config.owner}/${config.repo}/pull/${config.number}`;
-					const reason = pr.merged ? "merged" : "closed";
-					const concise = `${pr.merged ? "🔀" : "❌"} PR ${prLabel} was ${reason}. Monitoring stopped.`;
-					const detailed = `${pr.merged ? "🔀" : "❌"} PR ${prUrl} was ${reason}. Monitoring stopped.`;
+					// IMPORTANT: Use prLabel (owner/repo#number) in notification text, NOT prUrl.
+				// linkifyPRRefs converts prLabel into a compact OSC 8 hyperlink.
+				// Using prUrl causes triplicated URLs when linkifyPRRefs wraps the
+				// full URL in a second hyperlink whose display text also contains the URL.
+				const prLabel = `${config.owner}/${config.repo}#${config.number}`;
+				const reason = pr.merged ? "merged" : "closed";
+				const concise = `${pr.merged ? "🔀" : "❌"} PR ${prLabel} was ${reason}. Monitoring stopped.`;
+				const detailed = `${pr.merged ? "🔀" : "❌"} PR ${prLabel} was ${reason}. Monitoring stopped.`;
 					sendPRNotification(concise, detailed, {deliverAs: "steer", host: config.host});
 					const key = prKey(config);
 					monitors.delete(key);
@@ -632,12 +644,13 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 				// Force-check: always consume the flag so /ghpr-monitor check is never
 				// a no-op. When the agent is active, queue the result for flush on turn_end.
 				if (mon.forceNotify) {
+					// IMPORTANT: Use prLabel (owner/repo#number) in notification text, NOT prUrl.
+					// See the merged/closed notification above for why.
 					const prLabel = `${config.owner}/${config.repo}#${config.number}`;
-					const prUrl = `https://${config.host}/${config.owner}/${config.repo}/pull/${config.number}`;
 					const items = formatActionableItems(curr, config, currentPreferences);
 					const detItems = formatAgentNotification(curr, config, currentPreferences);
 					const msg = items ?? `\u2705 No issues found on ${prLabel}`;
-					const detMsg = detItems?.detailed ?? `\u2705 No issues found on ${prUrl}`;
+					const detMsg = detItems?.detailed ?? `\u2705 No issues found on ${prLabel}`;
 					if (agentTurnActive) {
 						queuedForceChecks.push({ concise: msg, detailed: detMsg, host: config.host, monitorKey: prKey(config) });
 					} else {
