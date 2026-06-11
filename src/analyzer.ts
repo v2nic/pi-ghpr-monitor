@@ -625,7 +625,7 @@ export function formatActionableItems(status: PRStatus, config: MonitorConfig, p
 
 /**
  * Replace PR references (owner/repo#number), full PR URLs, and commit
- * URLs with OSC 8 hyperlinks so they are clickable in the terminal.
+ * URLs with clickable hyperlinks so they are clickable in the terminal.
  *
  * Three patterns are linkified:
  * 1. `https://host/owner/repo/pull/number` → clickable link (display: owner/repo#number)
@@ -633,44 +633,66 @@ export function formatActionableItems(status: PRStatus, config: MonitorConfig, p
  *    (display: short 7-char SHA, so the link reads as e.g. `abc1234`)
  * 3. `owner/repo#number` → clickable link using defaultHost
  *
- * OSC 8 hyperlinks use the format:
- *   \x1b]8;;URL\x1b\\ display_text \x1b]8;;\x1b\\
+ * Two output formats are supported, because pi renders the two notification
+ * delivery paths with DIFFERENT components:
  *
- * The pi-tui Text component uses wrapTextWithAnsi which correctly
- * handles OSC 8 sequences, preserving them across line wraps and
- * excluding them from visible-width calculations.
+ * - `"osc8"` (default): emits raw OSC 8 escape sequences
+ *   `\x1b]8;;URL\x1b\\ display \x1b]8;;\x1b\\`. Used for the footer status
+ *   line and the CustomMessage renderer, which both use pi-tui's Text /
+ *   wrapTextWithAnsi path that handles OSC 8 correctly.
  *
- * This function is idempotent: running it on already-linkified text
- * produces the same result, because existing OSC 8 sequences are
- * extracted before regex matching and reinserted unchanged.
+ * - `"markdown"`: emits markdown links `[display](URL)`. Used for the
+ *   UserMessage path (pi.sendUserMessage → UserMessageComponent → pi-tui
+ *   Markdown component). The Markdown component MANGLES pre-baked OSC 8
+ *   escapes — its autolink detection finds the href URL inside the OSC 8
+ *   sequence and re-linkifies it, producing doubled/tripled output. Feeding
+ *   it markdown link syntax instead makes it emit a single clean OSC 8
+ *   hyperlink (or a `display (url)` fallback when OSC 8 is unsupported).
+ *
+ * This function is idempotent for the `"osc8"` format: running it on
+ * already-linkified text produces the same result, because existing OSC 8
+ * sequences are extracted before regex matching and reinserted unchanged.
  *
  * @param text - The text containing PR references and/or URLs
  * @param defaultHost - The host to use for owner/repo#number shorthands.
  *                      Defaults to "github.com". For GitHub Enterprise,
  *                      pass the enterprise hostname (e.g. "github.corp.com").
+ * @param format - Output format: "osc8" (default) or "markdown".
  */
-export function linkifyPRRefs(text: string, defaultHost: string = "github.com"): string {
+export function linkifyPRRefs(text: string, defaultHost: string = "github.com", format: "osc8" | "markdown" = "osc8"): string {
+	// Helper that emits a link in the requested format.
+	const link = (url: string, display: string): string =>
+		format === "markdown"
+			? `[${display}](${url})`
+			: `\x1b]8;;${url}\x1b\\${display}\x1b]8;;\x1b\\`;
+
 	// Extract existing OSC 8 sequences to avoid double-linkification.
 	// Replace them with unique NUL-delimited placeholders, run the regex
 	// replacements on the clean text, then restore the originals.
-	// After each pass that creates new OSC 8 sequences, we re-extract
-	// them into placeholders so subsequent passes can't match inside them.
-	const oscSequences: string[] = [];
+	// After each pass that creates new links, we re-extract them into
+	// placeholders so subsequent passes can't match inside them. This applies
+	// to both OSC 8 sequences (osc8 format) and markdown links (markdown
+	// format) — e.g. the third pass must not match the `owner/repo#number`
+	// label inside a `[owner/repo#number](url)` markdown link from pass one.
+	const protectedSpans: string[] = [];
 	// Match complete OSC 8 hyperlinks: \x1b]8;;URL\x1b\\DISPLAY\x1b]8;;\x1b\\
 	const oscPattern = /\x1b\]8;;[^\x1b]*\x1b\\[^\x1b]*\x1b\]8;;\x1b\\/g;
+	// Match markdown links: [display](url)
+	const markdownLinkPattern = /\[[^\]]*\]\([^)]*\)/g;
 
-	function extractOsc(): void {
-		text = text.replace(oscPattern, (match) => {
-			const placeholder = `\x00OSC${oscSequences.length}\x00`;
-			oscSequences.push(match);
+	function protectLinks(): void {
+		const pattern = format === "markdown" ? markdownLinkPattern : oscPattern;
+		text = text.replace(pattern, (match) => {
+			const placeholder = `\x00LINK${protectedSpans.length}\x00`;
+			protectedSpans.push(match);
 			return placeholder;
 		});
 	}
 
-	// Extract any pre-existing OSC 8 sequences
-	extractOsc();
+	// Extract any pre-existing links of the active format
+	protectLinks();
 
-	// First pass: wrap existing full PR URLs in OSC 8 hyperlinks.
+	// First pass: wrap existing full PR URLs in hyperlinks.
 	// Matches https://github.com/owner/repo/pull/123 (or any host)
 	// Uses owner/repo#number as the display text (not the full URL) to avoid
 	// triplicating the URL in terminals that don't support OSC 8 hyperlinks.
@@ -680,14 +702,14 @@ export function linkifyPRRefs(text: string, defaultHost: string = "github.com"):
 	text = text.replace(urlPattern, (_match, host: string, owner: string, repo: string, number: string) => {
 		const url = `https://${host}/${owner}/${repo}/pull/${number}`;
 		const label = `${owner}/${repo}#${number}`;
-		return `\x1b]8;;${url}\x1b\\${label}\x1b]8;;\x1b\\`;
+		return link(url, label);
 	});
 
-	// Re-extract newly created OSC 8 sequences so the next pass can't
+	// Re-extract newly created links so the next pass can't
 	// match the owner/repo#number display text inside them.
-	extractOsc();
+	protectLinks();
 
-	// Second pass: wrap commit URLs in OSC 8 hyperlinks with the short
+	// Second pass: wrap commit URLs in hyperlinks with the short
 	// 7-character SHA as the visible display text. This produces compact
 	// notifications like "📝 New commit abc1234 pushed to ..." where the
 	// short SHA is a clickable hyperlink to the full commit on GitHub.
@@ -696,25 +718,25 @@ export function linkifyPRRefs(text: string, defaultHost: string = "github.com"):
 	text = text.replace(commitUrlPattern, (_match, host: string, owner: string, repo: string, sha: string) => {
 		const url = `https://${host}/${owner}/${repo}/commit/${sha}`;
 		const shortSha = sha.slice(0, 7);
-		return `\x1b]8;;${url}\x1b\\${shortSha}\x1b]8;;\x1b\\`;
+		return link(url, shortSha);
 	});
 
-	// Re-extract newly created OSC 8 sequences again.
-	extractOsc();
+	// Re-extract newly created links again.
+	protectLinks();
 
-	// Third pass: replace owner/repo#number patterns with OSC 8 hyperlinks.
+	// Third pass: replace owner/repo#number patterns with hyperlinks.
 	// These link to defaultHost (default: github.com).
 	// Word boundary (\b) after the number prevents trailing punctuation
 	// (e.g. "...", ".", ",") from being captured as part of the reference.
 	const refPattern = /([a-zA-Z0-9_.-]+)\/([a-zA-Z0-9_.-]+)#([0-9]+)\b/g;
 	text = text.replace(refPattern, (_match, owner: string, repo: string, number: string) => {
 		const url = `https://${defaultHost}/${owner}/${repo}/pull/${number}`;
-		return `\x1b]8;;${url}\x1b\\${owner}/${repo}#${number}\x1b]8;;\x1b\\`;
+		return link(url, `${owner}/${repo}#${number}`);
 	});
 
-	// Restore OSC 8 sequences from placeholders
-	for (let i = oscSequences.length - 1; i >= 0; i--) {
-		text = text.replace(`\x00OSC${i}\x00`, oscSequences[i]!);
+	// Restore protected link spans from placeholders
+	for (let i = protectedSpans.length - 1; i >= 0; i--) {
+		text = text.replace(`\x00LINK${i}\x00`, protectedSpans[i]!);
 	}
 
 	return text;

@@ -1197,6 +1197,55 @@ describe("linkifyPRRefs", () => {
 			`\u{1F4DD} New commit ${linkify(`https://github.com/v2nic/repo/commit/${sha}`, "abc1234")} pushed to ${linkify("https://github.com/v2nic/repo/pull/7", "v2nic/repo#7")}. Review the PR description.`,
 		);
 	});
+
+	// -------------------------------------------------------------------
+	// Markdown output format (for the UserMessage / pi-tui Markdown renderer)
+	//
+	// The pi-tui Markdown component re-linkifies URLs embedded in raw OSC 8
+	// escapes, producing doubled/tripled output. The "markdown" format emits
+	// `[display](url)` link syntax instead, which the Markdown component
+	// renders into a single clean OSC 8 hyperlink.
+	// -------------------------------------------------------------------
+
+	it("emits markdown link syntax for full PR URLs", () => {
+		const input = "📡 https://github.com/mobilityhouse/vgi-na-masscec/pull/366";
+		const result = linkifyPRRefs(input, "github.com", "markdown");
+		expect(result).toBe(
+			"📡 [mobilityhouse/vgi-na-masscec#366](https://github.com/mobilityhouse/vgi-na-masscec/pull/366)",
+		);
+		// No raw OSC 8 escape sequences in markdown output
+		expect(result).not.toContain("\x1b]8;;");
+	});
+
+	it("emits markdown link syntax for owner/repo#number refs", () => {
+		const input = "⚠️  Merge conflicts detected on owner/repo#42";
+		const result = linkifyPRRefs(input, "github.com", "markdown");
+		expect(result).toBe(
+			"⚠️  Merge conflicts detected on [owner/repo#42](https://github.com/owner/repo/pull/42)",
+		);
+		expect(result).not.toContain("\x1b]8;;");
+	});
+
+	it("emits markdown link syntax for commit URLs with short SHA display", () => {
+		const sha = "abc1234567890def1234567890abcdef12345678";
+		const input = `\u{1F4DD} New commit https://github.com/v2nic/pi-ghpr-monitor/commit/${sha} pushed to v2nic/pi-ghpr-monitor#42`;
+		const result = linkifyPRRefs(input, "github.com", "markdown");
+		expect(result).toBe(
+			`\u{1F4DD} New commit [abc1234](https://github.com/v2nic/pi-ghpr-monitor/commit/${sha}) pushed to [v2nic/pi-ghpr-monitor#42](https://github.com/v2nic/pi-ghpr-monitor/pull/42)`,
+		);
+		expect(result).not.toContain("\x1b]8;;");
+	});
+
+	it("markdown format does not duplicate the URL (no triplication)", () => {
+		const input = "🔀 PR https://github.com/v2nic/pi-ghpr-monitor/pull/59 was merged. Monitoring stopped.";
+		const result = linkifyPRRefs(input, "github.com", "markdown");
+		// The full URL must appear exactly once (as the markdown link target).
+		const urlOccurrences = result.split("https://github.com/v2nic/pi-ghpr-monitor/pull/59").length - 1;
+		expect(urlOccurrences).toBe(1);
+		// The display label appears once.
+		const labelOccurrences = result.split("v2nic/pi-ghpr-monitor#59").length - 1;
+		expect(labelOccurrences).toBe(1);
+	});
 });
 
 describe("snapshotPR extracts lastCommitOid", () => {

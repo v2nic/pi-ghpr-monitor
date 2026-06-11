@@ -371,8 +371,15 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 	function sendPRNotification(concise: string, detailed: string, options?: { deliverAs?: "steer" | "followUp"; host?: string }) {
 		const delivery = options?.deliverAs ?? "steer";
 		const linkifyHost = options?.host ?? "github.com";
-		const linkifiedDetailed = linkifyPRRefs(detailed, linkifyHost);
-		const linkifiedConcise = linkifyPRRefs(concise, linkifyHost);
+		// The detailed message is delivered via pi.sendUserMessage() and rendered
+		// by pi-tui's Markdown component, which re-linkifies URLs embedded in raw
+		// OSC 8 escapes (producing doubled/tripled output). Use markdown link
+		// syntax — the Markdown component renders that into a single clean OSC 8
+		// hyperlink (or a `display (url)` fallback when OSC 8 is unsupported).
+		const markdownDetailed = linkifyPRRefs(detailed, linkifyHost, "markdown");
+		// The concise message feeds the footer/CustomMessage Text renderer, which
+		// handles raw OSC 8 escapes correctly via wrapTextWithAnsi().
+		const linkifiedConcise = linkifyPRRefs(concise, linkifyHost, "osc8");
 
 		// Deliver detailed content to the agent via UserMessage.
 		// pi.sendUserMessage() creates a UserMessage that is injected into the
@@ -382,24 +389,23 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 		// CustomMessage -> convertToLlm(), so error messages must NOT use it —
 		// they use uiCtx.notify() instead to stay TUI-only.
 		//
-		// Both the UserMessage (detailed) and the CustomMessage (concise) are
-		// linkified with OSC 8 hyperlinks so PR references are clickable in
-		// terminals that support the protocol. The UserMessageComponent renderer
-		// uses pi-tui's Markdown component which handles OSC 8 via
-		// wrapTextWithAnsi(). The CustomMessage renderer uses pi-tui's Text
-		// component which also handles OSC 8 via wrapTextWithAnsi().
+		// The UserMessage (detailed) uses markdown link syntax because
+		// UserMessageComponent renders via pi-tui's Markdown component. The
+		// CustomMessage concise uses raw OSC 8 because its renderer uses pi-tui's
+		// Text component. Both produce a single clean OSC 8 hyperlink in the TUI.
 		if (delivery) {
-			pi.sendUserMessage(linkifiedDetailed, { deliverAs: delivery });
+			pi.sendUserMessage(markdownDetailed, { deliverAs: delivery });
 		}
 
 		// Emit a CustomMessage for the registered message renderer.
 		// When a UserMessage is also being sent (delivery is set), display:false
 		// avoids a duplicate visible message — the UserMessage already appears in
 		// the TUI. When no UserMessage is sent (delivery is undefined/null),
-		// display:true makes the CustomMessage the visible notification.
+		// display:true makes the CustomMessage the visible notification (rendered
+		// by the Text component, hence raw OSC 8 in details.concise).
 		pi.sendMessage({
 			customType: "ghpr-monitor",
-			content: linkifiedDetailed,
+			content: markdownDetailed,
 			display: !delivery,
 			details: { concise: linkifiedConcise },
 		});
