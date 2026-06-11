@@ -105,8 +105,11 @@ export interface ThreadSummary {
 
 export interface CommentSummary {
 	id: string;
-	/** REST API numeric ID (from IssueComment.databaseId or PullRequestReviewComment.fullDatabaseId) */
-	databaseId: string;
+	/** REST API numeric ID — the number you'd use in a GitHub REST API URL.
+	 * For IssueComment (general PR comments), this comes from `databaseId` (Int).
+	 * For PullRequestReviewComment (thread comments), this comes from `fullDatabaseId` (BigInt string).
+	 * Both represent the same thing: the numeric ID used by the GitHub REST API v3/v4. */
+	restApiId: string;
 	author: string;
 	body: string;
 	/** Untruncated comment body (for agent context) */
@@ -271,6 +274,20 @@ function isAcknowledged(comment: CommentNode): boolean {
 	return !!(comment.reactions?.nodes?.some((r: ReactionNode) => ACKNOWLEDGED_REACTIONS.has(r.content)));
 }
 
+/** Extract the REST API ID from a review thread comment (PullRequestReviewComment).
+ *  Prefers `fullDatabaseId` (BigInt string) since that's the canonical field for this type,
+ *  falls back to `databaseId` (Int) for older API versions or test mocks. */
+function reviewCommentRestApiId(c: CommentNode): string {
+	return c.fullDatabaseId ?? (c.databaseId != null ? String(c.databaseId) : "");
+}
+
+/** Extract the REST API ID from a general PR comment (IssueComment).
+ *  Prefers `databaseId` (Int) since that's the canonical field for this type,
+ *  falls back to `fullDatabaseId` (BigInt string) for robustness. */
+function generalCommentRestApiId(c: CommentNode): string {
+	return c.databaseId != null ? String(c.databaseId) : (c.fullDatabaseId ?? "");
+}
+
 export function snapshotPR(pr: PullRequestData): PRStatus {
 	const threads = pr.reviewThreads.nodes
 		.filter((t: ReviewThreadNode) => !t.isResolved)
@@ -293,7 +310,7 @@ export function snapshotPR(pr: PullRequestData): PRStatus {
 				line: first?.line,
 				allComments: comments.map((c: CommentNode) => ({
 					id: c.id,
-					databaseId: String(c.fullDatabaseId ?? c.databaseId ?? ''),
+					restApiId: reviewCommentRestApiId(c),
 					author: c.author?.login ?? "",
 					body: firstLine(c.body, 120),
 					fullBody: c.body,
@@ -307,7 +324,7 @@ export function snapshotPR(pr: PullRequestData): PRStatus {
 		.filter((c: CommentNode) => !isAcknowledged(c))
 		.map((c: CommentNode) => ({
 			id: c.id,
-			databaseId: String(c.databaseId ?? c.fullDatabaseId ?? ''),
+			restApiId: generalCommentRestApiId(c),
 			author: c.author?.login ?? "",
 			body: firstLine(c.body, 120),
 			fullBody: c.body,
@@ -513,7 +530,7 @@ function formatCommentDetails(comments: CommentSummary[], prev?: CommentSummary[
 	const prevIds = new Set((prev ?? []).map(c => c.id));
 	return comments
 		.filter(c => !prevIds.has(c.id) || !prev) // show new comments only (or all if no prev)
-		.map(c => `  - [${c.author}] ${firstLine(c.body, 120)} (id: ${c.id}, databaseId: ${c.databaseId})`)
+		.map(c => `  - [${c.author}] ${firstLine(c.body, 120)} (id: ${c.id}, restApiId: ${c.restApiId})`)
 		.join("\n");
 }
 
@@ -731,7 +748,7 @@ function formatThreadDetailBlock(thread: ThreadSummary): string {
 			const cmtLocation = c.path
 				? ` (${c.path}${c.line != null ? `:${c.line}` : ""})`
 				: "";
-			lines.push(`  ${c.author}${cmtLocation} (id: ${c.id}, databaseId: ${c.databaseId}): ${c.fullBody ?? c.body}`);
+			lines.push(`  ${c.author}${cmtLocation} (id: ${c.id}, restApiId: ${c.restApiId}): ${c.fullBody ?? c.body}`);
 		}
 	} else {
 		// Fallback: only last comment available
@@ -745,7 +762,7 @@ function formatThreadDetailBlock(thread: ThreadSummary): string {
  * Format a comment detail block for the agent, including full comment body.
  */
 function formatCommentDetailBlock(comment: CommentSummary): string {
-	return `Comment ${comment.id} by ${comment.author} (databaseId: ${comment.databaseId}):\n  ${comment.fullBody ?? comment.body}`;
+	return `Comment ${comment.id} by ${comment.author} (restApiId: ${comment.restApiId}):\n  ${comment.fullBody ?? comment.body}`;
 }
 
 /**

@@ -537,7 +537,7 @@ describe("preferences in notification formatting", () => {
 				{ id: "t1", isResolved: false, lastCommentAuthor: "user", lastCommentBody: "fix this" },
 			],
 			commentDetails: [
-				{ id: "c1", databaseId: "1", author: "user", body: "comment" },
+				{ id: "c1", restApiId: "1", author: "user", body: "comment" },
 			],
 			checkDetails: [
 				{ name: "ci/test", conclusion: "FAILURE" },
@@ -622,7 +622,7 @@ describe("preferences in notification formatting", () => {
 			...cleanStatus,
 			generalComments: 2,
 			commentDetails: [
-				{ id: "c1", databaseId: "1", author: "user", body: "comment" },
+				{ id: "c1", restApiId: "1", author: "user", body: "comment" },
 			],
 		};
 
