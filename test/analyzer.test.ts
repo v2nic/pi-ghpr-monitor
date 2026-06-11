@@ -1441,7 +1441,7 @@ describe("formatThreadDetails concise", () => {
 		expect(result).toContain("PRRT_abc");
 	});
 
-	it("includes comment id and databaseId in concise one-liner", () => {
+	it("includes comment id and restApiId in concise one-liner", () => {
 		const status: PRStatus = {
 			unresolvedThreads: 0,
 			generalComments: 1,
