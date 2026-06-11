@@ -734,10 +734,6 @@ export function formatFooterStatus(config: MonitorConfig, status: PRStatus | nul
 // ---------------------------------------------------------------------------
 
 /**
- * Format a thread detail block for the agent, including full comment bodies,
- * file path, line number, and all comments in the conversation.
- */
-/**
  * Parse a unified diff hunk header like `@@ -40,7 +40,7 @@` and return
  * the starting line number for the new (right-side) file.
  * Returns null if the header cannot be parsed.
@@ -781,8 +777,8 @@ function formatDiffExcerpt(diffHunk: string, targetLine: number | null | undefin
 	// If we have a target line number, try to find and highlight it
 	if (targetLine != null) {
 		// Map diff lines to new-file line numbers
-		// Lines after the header: ' ' = context (both sides advance),
-		// '-' = removed (old side only), '+' = added (new side only)
+		// Lines after the header: ' ' = context (new-file line advances),
+		// '-' = removed (skipped — no new-file line), '+' = added (new-file line advances)
 		let newLine = header.newStart;
 		let targetIdx = -1;
 		const lineMap: { idx: number; newLine: number }[] = [];
@@ -797,7 +793,7 @@ function formatDiffExcerpt(diffHunk: string, targetLine: number | null | undefin
 			}
 
 			if (ch === "-") {
-				// Removed line: only old side advances
+				// Removed line: not present in the new file, so skip it
 				continue;
 			}
 
