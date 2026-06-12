@@ -310,6 +310,12 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 	// NOTE: Per-monitor pending notifications (mon.pendingNotification) replace the
 	// former global queuedUpdate/queuedForceChecks to prevent cross-monitor overwrite and
 	// enable batched delivery in turn_end. See issue #14.
+	//
+	// Known limitation: mon.pendingNotification is a single slot. If a status update
+	// and a nudge both queue during the same active turn, the nudge will not overwrite
+	// the status update (priority guard), but a force-check will. This is an acceptable
+	// tradeoff for the common case of one notification per monitor per turn.
+	// A future iteration could use a per-monitor queue for full ordering guarantees.
 	let uiCtx: ExtensionUIContext | undefined;
 	const MAX_BACKOFF_SEC = 300; // 5 minutes max rate-limit backoff
 	const MAX_IDLE_SEC = 300; // 5 minutes max idle polling
