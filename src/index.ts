@@ -1084,8 +1084,8 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 			"Use action='status' to see all currently monitored PRs.",
 			"Use action='check' to trigger an immediate poll.",
 			"Use action='preferences' to view current preferences or update them with a value parameter.",
-			"The value parameter for preferences is a JSON string with keys: newComments, conflict, ciFailure, reminder, allClear, firstPoll, threadReply.",
-			"Template variables available in preferences: {owner}, {repo}, {number}, {host}, {prLabel}, plus situation-specific vars like {failingChecks}, {unresolvedThreads}, {generalComments}, {conflict}, {threadId}, {path}, {line}.",
+			"The value parameter for preferences is a JSON string with keys: newComments, conflict, ciFailure, reminder, allClear, firstPoll, descriptionStaleness, threadReply.",
+			"Template variables available in preferences: {owner}, {repo}, {number}, {host}, {prLabel}, plus situation-specific vars like {failingChecks}, {unresolvedThreads}, {generalComments}, {conflict}, {descriptionStaleness}, {threadId}, {path}, {line}.",
 			"Do NOT stop monitoring on your own. Only the user can stop monitoring via /ghpr-monitor off.",
 			"Monitoring runs until the user stops it via /ghpr-monitor off, or the PR is merged/closed.",
 			"You will receive PR status updates as notifications.",
@@ -1306,8 +1306,8 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 					const prefsDisplay = lines.join("\n");
 					const availableKeys = Object.keys(PreferencesSchema.properties).join(", ");
 					const helpText = hasPrefs
-						? `Current preferences:\n${prefsDisplay}\n\nAvailable keys: ${availableKeys}\nTemplate variables: {owner}, {repo}, {number}, {host}, {prLabel}, {prUrl}, {unresolvedThreads}, {generalComments}, {failingChecks}, {conflict}, {commitOid}, {commitShortOid}, {commitUrl}`
-						: `No custom preferences set. Using defaults.\n\nAvailable keys: ${availableKeys}\nTemplate variables: {owner}, {repo}, {number}, {host}, {prLabel}, {prUrl}, {unresolvedThreads}, {generalComments}, {failingChecks}, {conflict}, {commitOid}, {commitShortOid}, {commitUrl}\n\nSet preferences with: ghpr-monitor(action='preferences', value='{"conflict": "⚠️ Conflict on {prLabel}!"}')`;
+						? `Current preferences:\n${prefsDisplay}\n\nAvailable keys: ${availableKeys}\nTemplate variables: {owner}, {repo}, {number}, {host}, {prLabel}, {prUrl}, {unresolvedThreads}, {generalComments}, {failingChecks}, {conflict}, {descriptionStaleness}, {threadId}, {path}, {line}`
+						: `No custom preferences set. Using defaults.\n\nAvailable keys: ${availableKeys}\nTemplate variables: {owner}, {repo}, {number}, {host}, {prLabel}, {prUrl}, {unresolvedThreads}, {generalComments}, {failingChecks}, {conflict}, {descriptionStaleness}, {threadId}, {path}, {line}\n\nSet preferences with: ghpr-monitor(action='preferences', value='{"conflict": "⚠️ Conflict on {prLabel}!"}')`;
 					return {
 						content: [{ type: "text", text: helpText }],
 						details: { action: "preferences", status: "read", preferences: currentPreferences },

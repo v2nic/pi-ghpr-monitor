@@ -69,10 +69,12 @@ describe("validatePreferences", () => {
 			reminder: "Still issues on {prLabel}",
 			allClear: "All clear on {prLabel}",
 			firstPoll: "Monitoring {prLabel}...",
+			descriptionStaleness: "New commit on {prLabel}",
+			threadReply: "Reply to thread {threadId}",
 		});
 		const result = validatePreferences(json);
 		expect(result.ok).toBe(true);
-		expect(Object.keys(result.preferences!)).toHaveLength(6);
+		expect(Object.keys(result.preferences!)).toHaveLength(8);
 	});
 
 	it("rejects invalid JSON", () => {
@@ -379,8 +381,8 @@ describe("loadPreferences / savePreferences", () => {
 // ---------------------------------------------------------------------------
 
 describe("DEFAULT_PREFERENCES", () => {
-	it("has all six preference keys", () => {
-		expect(Object.keys(DEFAULT_PREFERENCES)).toHaveLength(6);
+	it("has all preference keys", () => {
+		expect(Object.keys(DEFAULT_PREFERENCES)).toHaveLength(8);
 		expect(DEFAULT_PREFERENCES).toHaveProperty("newComments");
 		expect(DEFAULT_PREFERENCES).toHaveProperty("conflict");
 		expect(DEFAULT_PREFERENCES).toHaveProperty("ciFailure");

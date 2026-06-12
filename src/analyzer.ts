@@ -389,6 +389,7 @@ function makeTemplateVars(config: MonitorConfig, extra?: Partial<TemplateVars>):
 		number: config.number,
 		host: config.host,
 		prLabel: `${config.owner}/${config.repo}#${config.number}`,
+		prUrl: `https://${config.host}/${config.owner}/${config.repo}/pull/${config.number}`,
 		threadId: undefined,
 		path: undefined,
 		line: undefined,

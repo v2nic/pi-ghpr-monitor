@@ -19,6 +19,7 @@
  *   reminder:     {unresolvedThreads}, {generalComments}, {failingChecks}, {conflict}
  *   allClear:     (none extra)
  *   firstPoll:    {intervalSec}
+ *   descriptionStaleness:  {owner}, {repo}, {number}, {host}, {prLabel}
  *   threadReply:  {threadId}, {path}, {line}
  */
 
@@ -72,6 +73,12 @@ export const PreferencesSchema = Type.Object(
 					"Prompt override for the initial status on first poll. Variables: {owner}, {repo}, {number}, {host}, {prLabel}, {intervalSec}",
 			}),
 		),
+		descriptionStaleness: Type.Optional(
+			Type.String({
+				description:
+					"Prompt override for description staleness nudge when new commits are detected. Variables: {owner}, {repo}, {number}, {host}, {prLabel}",
+			}),
+		),
 		threadReply: Type.Optional(
 			Type.String({
 				description:
@@ -112,6 +119,8 @@ export const DEFAULT_PREFERENCES: Record<keyof Preferences, string | undefined> 
 	reminder: undefined,
 	allClear: "✨ {prLabel} — no issues, all clear",
 	firstPoll: "📡 Monitoring {owner}/{repo}#{number}... (polling every {intervalSec}s)",
+	descriptionStaleness: "📝 New commit pushed to {prLabel}. Review the PR description to ensure it still accurately reflects the latest changes.",
+	threadReply: undefined,
 };
 
 // ---------------------------------------------------------------------------
@@ -157,12 +166,13 @@ export interface TemplateVars {
 	failingChecks?: string;
 	conflict?: boolean;
 	intervalSec?: number;
+	descriptionStaleness?: string;
 	threadId?: string;
 	path?: string;
 	line?: number | null;
 }
 
-const TEMPLATE_VAR_RE = /\{(owner|repo|number|host|prLabel|prUrl|unresolvedThreads|generalComments|failingChecks|conflict|intervalSec|threadId|path|line)\}/g;
+const TEMPLATE_VAR_RE = /\{(owner|repo|number|host|prLabel|prUrl|unresolvedThreads|generalComments|failingChecks|conflict|intervalSec|descriptionStaleness|threadId|path|line)\}/g;
 
 /** Non-global version for .test() checks. The /g flag causes .test() to
  *  advance lastIndex across successive calls, producing false negatives.
@@ -200,6 +210,8 @@ export function interpolateTemplate(template: string, vars: TemplateVars): strin
 				return vars.conflict !== undefined ? String(vars.conflict) : match;
 			case "intervalSec":
 				return vars.intervalSec !== undefined ? String(vars.intervalSec) : match;
+			case "descriptionStaleness":
+				return vars.descriptionStaleness ?? match;
 			case "threadId":
 				return vars.threadId ?? match;
 			case "path":
