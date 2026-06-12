@@ -459,8 +459,10 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 		if (batchEntries.length > 0) {
 			// Linkify each notification with its own host before joining,
 			// so multi-host batches get correct hyperlink targets per notification.
-			const combinedDetailed = batchEntries.map(e => linkifyPRRefs(e.notification.detailed, e.notification.host)).join("\n\n");
-			const combinedConcise = batchEntries.map(e => linkifyPRRefs(e.notification.concise, e.notification.host)).join("\n\n");
+			// Detailed content is delivered through UserMessage/Markdown, so pre-linkify
+			// it as markdown to preserve #61's OSC-8 rendering fix after batching.
+			const combinedDetailed = batchEntries.map(e => linkifyPRRefs(e.notification.detailed, e.notification.host, "markdown")).join("\n\n");
+			const combinedConcise = batchEntries.map(e => linkifyPRRefs(e.notification.concise, e.notification.host, "osc8")).join("\n\n");
 			sendPRNotification(combinedConcise, combinedDetailed, { deliverAs: "steer" });
 
 			// Clear pending notifications and update per-monitor state AFTER successful delivery
@@ -750,9 +752,9 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 						if (agentTurnActive) {
 							// Queue for flush on turn_end, matching the pattern used by status updates and force-checks
 							// Only queue if not already queued (status updates take priority)
-					if (!mon.pendingNotification) {
-						mon.pendingNotification = { concise: stalenessMsg, detailed: stalenessMsg, host: config.host };
-					}
+							if (!mon.pendingNotification) {
+								mon.pendingNotification = { concise: stalenessMsg, detailed: stalenessMsg, host: config.host };
+							}
 						} else {
 							sendPRNotification(stalenessMsg, stalenessMsg, {deliverAs: "steer", host: config.host});
 						}

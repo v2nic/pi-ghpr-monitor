@@ -175,7 +175,7 @@ describe("All notification paths use sendPRNotification for agent delivery", () 
 		const turnEndIdx = src.indexOf('"turn_end"');
 		expect(turnEndIdx).toBeGreaterThan(-1);
 
-		const nearby = src.slice(turnEndIdx, turnEndIdx + 1200);
+		const nearby = src.slice(turnEndIdx, turnEndIdx + 2500);
 		expect(nearby).toContain("sendPRNotification(");
 	});
 });
@@ -388,6 +388,18 @@ describe("Queued update preserves detailed content", () => {
 		expect(turnEndBlock).toContain("batchEntries");
 		expect(turnEndBlock).toContain("sendPRNotification(combinedConcise, combinedDetailed");
 		expect(turnEndBlock).toContain("linkifyPRRefs");
+	});
+
+	it("turn_end batch pre-linkifies detailed content as markdown and concise content as OSC 8", () => {
+		// Regression guard for compatibility with #61: sendUserMessage renders via
+		// Markdown, so batched detailed content must not be pre-linkified as raw OSC 8.
+		const turnEndIdx = src.indexOf('"turn_end"');
+		expect(turnEndIdx).toBeGreaterThan(-1);
+
+		const turnEndBlock = src.slice(turnEndIdx, turnEndIdx + 2500);
+
+		expect(turnEndBlock).toContain('linkifyPRRefs(e.notification.detailed, e.notification.host, "markdown")');
+		expect(turnEndBlock).toContain('linkifyPRRefs(e.notification.concise, e.notification.host, "osc8")');
 	});
 
 	it("turn_end batch flush delivers pending notifications with both concise and detailed", () => {
