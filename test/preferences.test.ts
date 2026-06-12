@@ -149,6 +149,12 @@ describe("validatePreferences", () => {
 		expect(result.ok).toBe(true);
 	});
 
+	it("accepts descriptionStaleness with commit template variables", () => {
+		const result = validatePreferences('{"descriptionStaleness": "New commit {commitShortOid} ({commitUrl}) on {prLabel}"}');
+		expect(result.ok).toBe(true);
+		expect(result.preferences?.descriptionStaleness).toBe("New commit {commitShortOid} ({commitUrl}) on {prLabel}");
+	});
+
 });
 
 // ---------------------------------------------------------------------------
@@ -178,6 +184,16 @@ describe("interpolateTemplate", () => {
 	it("replaces prUrl", () => {
 		const result = interpolateTemplate("PR: {prUrl}", vars);
 		expect(result).toBe("PR: https://github.com/v2nic/pi-ghpr-monitor/pull/32");
+	});
+
+	it("replaces commit variables when provided", () => {
+		const result = interpolateTemplate("Commit {commitShortOid} ({commitOid}) at {commitUrl}", {
+			...vars,
+			commitOid: "abcdef1234567890",
+			commitShortOid: "abcdef1",
+			commitUrl: "https://github.com/v2nic/pi-ghpr-monitor/commit/abcdef1234567890",
+		});
+		expect(result).toBe("Commit abcdef1 (abcdef1234567890) at https://github.com/v2nic/pi-ghpr-monitor/commit/abcdef1234567890");
 	});
 
 	it("replaces situation-specific variables when provided", () => {
@@ -389,6 +405,8 @@ describe("DEFAULT_PREFERENCES", () => {
 		expect(DEFAULT_PREFERENCES).toHaveProperty("reminder");
 		expect(DEFAULT_PREFERENCES).toHaveProperty("allClear");
 		expect(DEFAULT_PREFERENCES).toHaveProperty("firstPoll");
+		expect(DEFAULT_PREFERENCES).toHaveProperty("descriptionStaleness");
+		expect(DEFAULT_PREFERENCES).toHaveProperty("threadReply");
 	});
 
 	it("non-undefined defaults contain template variables", () => {
@@ -414,6 +432,11 @@ describe("DEFAULT_PREFERENCES", () => {
 	it("firstPoll default includes intervalSec variable", () => {
 		expect(DEFAULT_PREFERENCES.firstPoll).toContain("{intervalSec}");
 	});
+
+	it("descriptionStaleness default includes commitUrl for clickable short SHA rendering", () => {
+		expect(DEFAULT_PREFERENCES.descriptionStaleness).toContain("{commitUrl}");
+		expect(DEFAULT_PREFERENCES.descriptionStaleness).toContain("{prLabel}");
+	});
 });
 
 describe("getEffectivePreferences", () => {
@@ -425,6 +448,7 @@ describe("getEffectivePreferences", () => {
 		expect(effective.ciFailure).toBe(DEFAULT_PREFERENCES.ciFailure);
 		expect(effective.newComments).toBe(DEFAULT_PREFERENCES.newComments);
 		expect(effective.firstPoll).toBe(DEFAULT_PREFERENCES.firstPoll);
+		expect(effective.descriptionStaleness).toBe(DEFAULT_PREFERENCES.descriptionStaleness);
 		// reminder has no static default (computed at runtime)
 		expect(effective.reminder).toBeUndefined();
 	});

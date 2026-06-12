@@ -963,6 +963,9 @@ describe("formatThreadDetailBlock includes diffHunk as code block", () => {
 		expect(result!.detailed).toContain("   40 |  export function login() {");
 		expect(result!.detailed).toContain("   41 | +  const token = getToken();");
 		expect(result!.detailed).toContain("  ```");
+		const diffBlockEnd = result!.detailed.indexOf("  ```", result!.detailed.indexOf("  ```diff") + 1);
+		const replyHint = result!.detailed.indexOf("Reply to this thread:");
+		expect(replyHint).toBeGreaterThan(diffBlockEnd);
 	});
 
 	it("omits diff code block when diffHunk is absent/undefined", () => {

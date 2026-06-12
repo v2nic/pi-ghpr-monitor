@@ -10,7 +10,7 @@
  * default is used.
  *
  * Template variables available in all preferences:
- *   {owner}, {repo}, {number}, {host}, {prLabel}
+ *   {owner}, {repo}, {number}, {host}, {prLabel}, {prUrl}
  *
  * Additional situation-specific variables:
  *   newComments:  {unresolvedThreads}, {generalComments}
@@ -19,7 +19,7 @@
  *   reminder:     {unresolvedThreads}, {generalComments}, {failingChecks}, {conflict}
  *   allClear:     (none extra)
  *   firstPoll:    {intervalSec}
- *   descriptionStaleness:  {owner}, {repo}, {number}, {host}, {prLabel}
+ *   descriptionStaleness:  {commitOid}, {commitShortOid}, {commitUrl}
  *   threadReply:  {threadId}, {path}, {line}
  */
 
@@ -76,7 +76,7 @@ export const PreferencesSchema = Type.Object(
 		descriptionStaleness: Type.Optional(
 			Type.String({
 				description:
-					"Prompt override for description staleness nudge when new commits are detected. Variables: {owner}, {repo}, {number}, {host}, {prLabel}",
+					"Prompt override for description staleness nudge when new commits are detected. Variables: {owner}, {repo}, {number}, {host}, {prLabel}, {prUrl}, {commitOid}, {commitShortOid}, {commitUrl}",
 			}),
 		),
 		threadReply: Type.Optional(
@@ -119,7 +119,7 @@ export const DEFAULT_PREFERENCES: Record<keyof Preferences, string | undefined> 
 	reminder: undefined,
 	allClear: "✨ {prLabel} — no issues, all clear",
 	firstPoll: "📡 Monitoring {owner}/{repo}#{number}... (polling every {intervalSec}s)",
-	descriptionStaleness: "📝 New commit pushed to {prLabel}. Review the PR description to ensure it still accurately reflects the latest changes.",
+	descriptionStaleness: "📝 New commit {commitUrl} pushed to {prLabel}. Review the PR description to ensure it still accurately reflects the latest changes.",
 	threadReply: undefined,
 };
 
@@ -166,13 +166,16 @@ export interface TemplateVars {
 	failingChecks?: string;
 	conflict?: boolean;
 	intervalSec?: number;
-	descriptionStaleness?: string;
+	// Commit-related (used by descriptionStaleness)
+	commitOid?: string;
+	commitShortOid?: string;
+	commitUrl?: string;
 	threadId?: string;
 	path?: string;
 	line?: number | null;
 }
 
-const TEMPLATE_VAR_RE = /\{(owner|repo|number|host|prLabel|prUrl|unresolvedThreads|generalComments|failingChecks|conflict|intervalSec|descriptionStaleness|threadId|path|line)\}/g;
+const TEMPLATE_VAR_RE = /\{(owner|repo|number|host|prLabel|prUrl|unresolvedThreads|generalComments|failingChecks|conflict|intervalSec|commitOid|commitShortOid|commitUrl|threadId|path|line)\}/g;
 
 /** Non-global version for .test() checks. The /g flag causes .test() to
  *  advance lastIndex across successive calls, producing false negatives.
@@ -210,8 +213,12 @@ export function interpolateTemplate(template: string, vars: TemplateVars): strin
 				return vars.conflict !== undefined ? String(vars.conflict) : match;
 			case "intervalSec":
 				return vars.intervalSec !== undefined ? String(vars.intervalSec) : match;
-			case "descriptionStaleness":
-				return vars.descriptionStaleness ?? match;
+			case "commitOid":
+				return vars.commitOid ?? match;
+			case "commitShortOid":
+				return vars.commitShortOid ?? match;
+			case "commitUrl":
+				return vars.commitUrl ?? match;
 			case "threadId":
 				return vars.threadId ?? match;
 			case "path":
