@@ -292,8 +292,8 @@ function generalCommentRestApiId(c: CommentNode): string {
 	return c.databaseId != null ? String(c.databaseId) : (c.fullDatabaseId ?? "");
 }
 
-export function snapshotPR(pr: PullRequestData, ignoredBots?: string[]): PRStatus {
-	const ignoredBotsSet = ignoredBots && ignoredBots.length > 0 ? new Set(ignoredBots) : null;
+export function snapshotPR(pr: PullRequestData, ignoredBots: string[]): PRStatus {
+	const ignoredBotsSet = ignoredBots.length > 0 ? new Set(ignoredBots) : null;
 
 	const threads = pr.reviewThreads.nodes
 		.filter((t: ReviewThreadNode) => !t.isResolved)

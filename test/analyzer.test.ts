@@ -791,7 +791,7 @@ describe("acknowledged comments (THUMBS_UP reactions)", () => {
 			merged: false,
 			commits: { nodes: [{ commit: { oid: "test-oid", checkSuites: { nodes: [] } } }] },
 		};
-		const status = snapshotPR(pr);
+		const status = snapshotPR(pr, []);
 		// c-2 is acknowledged, so only c-1 counts
 		expect(status.generalComments).toBe(1);
 		expect(status.commentDetails).toHaveLength(1);
@@ -829,7 +829,7 @@ describe("acknowledged comments (THUMBS_UP reactions)", () => {
 			merged: false,
 			commits: { nodes: [{ commit: { oid: "test-oid", checkSuites: { nodes: [] } } }] },
 		};
-		const status = snapshotPR(pr);
+		const status = snapshotPR(pr, []);
 		// t-2 is filtered because its last comment has THUMBS_UP
 		expect(status.unresolvedThreads).toBe(1);
 		expect(status.threadDetails).toHaveLength(1);
@@ -850,7 +850,7 @@ describe("acknowledged comments (THUMBS_UP reactions)", () => {
 			merged: false,
 			commits: { nodes: [{ commit: { oid: "test-oid", checkSuites: { nodes: [] } } }] },
 		};
-		const status = snapshotPR(pr);
+		const status = snapshotPR(pr, []);
 		expect(status.generalComments).toBe(1);
 		expect(status.commentDetails[0].id).toBe("c-1");
 	});
@@ -870,7 +870,7 @@ describe("acknowledged comments (THUMBS_UP reactions)", () => {
 			merged: false,
 			commits: { nodes: [{ commit: { oid: "test-oid", checkSuites: { nodes: [] } } }] },
 		};
-		const status = snapshotPR(pr);
+		const status = snapshotPR(pr, []);
 		// c-1 has HEART (not THUMBS_UP), so it's kept
 		// c-2 has THUMBS_UP, so it's filtered
 		expect(status.generalComments).toBe(1);
@@ -1263,13 +1263,13 @@ describe("snapshotPR extracts lastCommitOid", () => {
 				],
 			},
 		});
-		const status = snapshotPR(pr);
+		const status = snapshotPR(pr, []);
 		expect(status.lastCommitOid).toBe("abc123def456");
 	});
 
 	it("returns empty string when no commits", () => {
 		const pr = makeMockPR({ commits: { nodes: [] } });
-		const status = snapshotPR(pr);
+		const status = snapshotPR(pr, []);
 		expect(status.lastCommitOid).toBe("");
 	});
 
@@ -1302,7 +1302,7 @@ describe("snapshotPR extracts lastCommitOid", () => {
 				],
 			},
 		});
-		const status = snapshotPR(pr);
+		const status = snapshotPR(pr, []);
 		expect(status.lastCommitOid).toBe("sha-98765");
 		expect(status.failingChecks).toContain("ci/test");
 	});
@@ -1334,7 +1334,7 @@ describe("snapshotPR maps databaseId/fullDatabaseId from GraphQL", () => {
 				],
 			},
 		});
-		const status = snapshotPR(pr);
+		const status = snapshotPR(pr, []);
 		expect(status.threadDetails[0].allComments![0].restApiId).toBe("12345");
 	});
 
@@ -1353,7 +1353,7 @@ describe("snapshotPR maps databaseId/fullDatabaseId from GraphQL", () => {
 				],
 			},
 		});
-		const status = snapshotPR(pr);
+		const status = snapshotPR(pr, []);
 		expect(status.commentDetails[0].restApiId).toBe("54321");
 	});
 
@@ -1383,7 +1383,7 @@ describe("snapshotPR maps databaseId/fullDatabaseId from GraphQL", () => {
 				],
 			},
 		});
-		const status = snapshotPR(pr);
+		const status = snapshotPR(pr, []);
 		expect(status.threadDetails[0].allComments![0].restApiId).toBe("99999");
 	});
 });
@@ -1591,17 +1591,4 @@ describe("snapshotPR ignoredBots filtering (general comments only)", () => {
 		expect(status.commentDetails).toHaveLength(1);
 	});
 
-	it("handles undefined ignoredBots gracefully", () => {
-		const pr = makeMockPR({
-			comments: {
-				nodes: [
-					{ id: "IC_1", databaseId: 100, body: "Hello", author: { login: "alice" }, createdAt: "2024-01-01T00:00:00Z" },
-				],
-			},
-		});
-		// No second argument at all:
-		const status = snapshotPR(pr);
-		expect(status.generalComments).toBe(1);
-		expect(status.commentDetails).toHaveLength(1);
-	});
 });
