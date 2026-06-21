@@ -78,14 +78,14 @@ The LLM tool only has `start` and `status` actions. Only the user can stop monit
 ## Installation
 
 ```bash
-pi install git:github.com/v2nic/pi-ghpr-monitor
+pi install git:github.com/elecnix/pi-ghpr-monitor
 ```
 
 Or add to your project's `.pi/settings.json`:
 
 ```json
 {
-  "packages": ["git:github.com/v2nic/pi-ghpr-monitor"]
+  "packages": ["git:github.com/elecnix/pi-ghpr-monitor"]
 }
 ```
 
@@ -109,8 +109,8 @@ Any text after the URL or `owner/repo number` is sent to the agent as a steer me
 The agent can start monitoring or check status:
 
 ```
-ghpr-monitor(action="start", url="https://github.com/v2nic/gh-pr-review/pull/42")
-ghpr-monitor(action="start", owner="v2nic", repo="gh-pr-review", pr_number=42)
+ghpr-monitor(action="start", url="https://github.com/elecnix/gh-pr-review/pull/42")
+ghpr-monitor(action="start", owner="elecnix", repo="gh-pr-review", pr_number=42)
 ghpr-monitor(action="status")
 ```
 
@@ -118,7 +118,7 @@ The agent **cannot** stop monitoring — only `/ghpr-monitor off` can do that. T
 
 ### Typical Workflow
 
-1. You start monitoring: `/ghpr-monitor https://github.com/v2nic/gh-pr-review/pull/42` — or just tell the agent to watch the PR
+1. You start monitoring: `/ghpr-monitor https://github.com/elecnix/gh-pr-review/pull/42` — or just tell the agent to watch the PR
 2. The agent uses the `ghpr-monitor` tool and begins polling
 3. When changes are detected, a notification is injected into the session:
    - **💬 New review comments** — the agent reads and addresses them
