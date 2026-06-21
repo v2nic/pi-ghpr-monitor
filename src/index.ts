@@ -708,12 +708,14 @@ export default function ghprMonitorExtension(pi: ExtensionAPI) {
 						// Include the full commit URL in the default message; linkifyPRRefs
 						// converts it into an OSC 8 hyperlink whose visible text is the
 						// short 7-char SHA, so the rendered notification reads e.g.
-						//   📝 New commit abc1234 pushed to v2nic/repo#42 by alice (co-authored by Bob). Review ...
+						//   📝 New commit abc1234 pushed to v2nic/repo#42 by alice, co-authored by Bob. Review ...
 						// where `abc1234` is a clickable link to the commit on GitHub. The
 						// "by <author>" clause is omitted when the author is unknown, and the
-						// "(co-authored by ...)" clause is omitted when there are no co-authors.
+						// ", co-authored by ..." clause is omitted when there are no co-authors.
+						// A comma form (rather than parentheses) avoids nested parens when a
+						// co-author's name itself contains "(...)".
 						const authorClause = commitAuthor ? ` by ${commitAuthor}` : "";
-						const coauthorClause = commitCoauthors ? ` (co-authored by ${commitCoauthors})` : "";
+						const coauthorClause = commitCoauthors ? `, co-authored by ${commitCoauthors}` : "";
 						const defaultStalenessMsg = `\u{1F4DD} New commit ${commitUrl} pushed to ${prLabel}${authorClause}${coauthorClause}. Review the PR description to ensure it still accurately reflects the latest changes.`;
 						const stalenessMsg = getPreferenceWithDefault(
 							"descriptionStaleness",
