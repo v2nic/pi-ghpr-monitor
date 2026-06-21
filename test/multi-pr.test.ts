@@ -665,7 +665,7 @@ describe("Description staleness nudge architecture", () => {
 
 	it("passes commit template variables to getPreferenceWithDefault", () => {
 		// Custom descriptionStaleness templates should be able to reference
-		// {commitOid}, {commitShortOid}, and {commitUrl}.
+		// {commitOid}, {commitShortOid}, {commitUrl}, and {commitAuthor}.
 		const stalenessBlock = src.slice(
 			src.indexOf("Description staleness nudge"),
 			src.indexOf("Description staleness nudge") + 2500,
@@ -673,6 +673,15 @@ describe("Description staleness nudge architecture", () => {
 		expect(stalenessBlock).toContain("commitOid,");
 		expect(stalenessBlock).toContain("commitShortOid,");
 		expect(stalenessBlock).toContain("commitUrl,");
+		expect(stalenessBlock).toContain("commitAuthor,");
+	});
+
+	it("includes the commit author in the default staleness message", () => {
+		// The author is sourced from the analyzed snapshot and appended as a
+		// "by <author>" clause that is omitted when the author is unknown.
+		expect(src).toContain("curr.lastCommitAuthor");
+		expect(src).toMatch(/by \$\{commitAuthor\}/);
+		expect(src).toMatch(/pushed to \$\{prLabel\}\$\{authorClause\}/);
 	});
 });
 

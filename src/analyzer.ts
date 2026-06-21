@@ -68,9 +68,18 @@ export interface CommitStatusNode {
 	contexts: StatusContextNode[];
 }
 
+export interface GitActorNode {
+	/** Git author name from the commit metadata (always present). */
+	name: string | null;
+	/** Linked GitHub account, when the commit email maps to a user. */
+	user: { login: string } | null;
+}
+
 export interface CommitNode {
 	commit: {
 		oid: string;
+		/** Optional: present in live API responses, may be omitted in fixtures. */
+		author?: GitActorNode | null;
 		checkSuites: { nodes: CheckSuiteNode[] };
 		status: CommitStatusNode | null;
 	};
@@ -139,6 +148,9 @@ export interface PRStatus {
 	lastCommentBySelf: boolean;
 	/** OID of the latest commit, used for description-staleness detection. */
 	lastCommitOid: string;
+	/** Author of the latest commit (GitHub login, falling back to the git
+	 *  author name). Empty string when no commit or author info is available. */
+	lastCommitAuthor: string;
 	// Detail for enriched notifications
 	threadDetails: ThreadSummary[];
 	commentDetails: CommentSummary[];
@@ -362,9 +374,14 @@ export function snapshotPR(pr: PullRequestData, ignoredBots: string[]): PRStatus
 		}
 	}
 
-	const lastCommitOid = pr.commits.nodes.length > 0
-		? pr.commits.nodes[0].commit.oid
-		: "";
+	const latestCommit = pr.commits.nodes.length > 0
+		? pr.commits.nodes[0].commit
+		: null;
+	const lastCommitOid = latestCommit?.oid ?? "";
+	// Prefer the GitHub login; fall back to the raw git author name. Both may be
+	// absent (e.g. unlinked commit email with no name), in which case stay empty.
+	const lastCommitAuthor =
+		latestCommit?.author?.user?.login ?? latestCommit?.author?.name ?? "";
 
 	return {
 		unresolvedThreads: countUnresolvedThreads(pr),
@@ -378,6 +395,7 @@ export function snapshotPR(pr: PullRequestData, ignoredBots: string[]): PRStatus
 		lastCommentTimestamp: getLatestCommentTimestamp(pr),
 		lastCommentBySelf: false,
 		lastCommitOid,
+		lastCommitAuthor,
 		threadDetails: threads,
 		commentDetails: comments,
 		checkDetails: checks,

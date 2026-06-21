@@ -131,6 +131,7 @@ function buildGraphQLResponse(state: MockPRState): object {
 							{
 								commit: {
 									oid: "abc123def456789",
+									author: { name: "Test Author", user: { login: "testauthor" } },
 									checkSuites: {
 										nodes: checkSuiteNodes,
 									},
