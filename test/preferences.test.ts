@@ -484,7 +484,7 @@ describe("preferences in notification formatting", () => {
 		pendingChecks: [] as string[],
 		lastCommentTimestamp: "",
 		lastCommentBySelf: false,
-		lastCommitOid: "", lastCommitAuthor: "",
+		lastCommitOid: "", lastCommitAuthor: "", lastCommitCoauthors: "",
 		threadDetails: [] as unknown[],
 		commentDetails: [] as unknown[],
 		checkDetails: [] as unknown[],
@@ -696,6 +696,37 @@ describe("preferences in notification formatting", () => {
 		expect(result).toBe(
 			"\u{1F4DD} New commit abc1234 pushed to v2nic/pi-ghpr-monitor#37 by ada",
 		);
+	});
+
+	it("interpolateTemplate substitutes {commitCoauthors}", () => {
+		const result = interpolateTemplate(
+			"Pushed to {prLabel} by {commitAuthor} (co-authored by {commitCoauthors})",
+			{
+				owner: "v2nic",
+				repo: "pi-ghpr-monitor",
+				number: 37,
+				host: "github.com",
+				prLabel: "v2nic/pi-ghpr-monitor#37",
+				prUrl: "https://github.com/v2nic/pi-ghpr-monitor/pull/37",
+				commitAuthor: "ada",
+				commitCoauthors: "Bob, Carol",
+			},
+		);
+		expect(result).toBe(
+			"Pushed to v2nic/pi-ghpr-monitor#37 by ada (co-authored by Bob, Carol)",
+		);
+	});
+
+	it("interpolateTemplate leaves {commitCoauthors} untouched when not provided", () => {
+		const result = interpolateTemplate("Pushed to {prLabel} (co-authored by {commitCoauthors})", {
+			owner: "v2nic",
+			repo: "pi-ghpr-monitor",
+			number: 37,
+			host: "github.com",
+			prLabel: "v2nic/pi-ghpr-monitor#37",
+			prUrl: "https://github.com/v2nic/pi-ghpr-monitor/pull/37",
+		});
+		expect(result).toBe("Pushed to v2nic/pi-ghpr-monitor#37 (co-authored by {commitCoauthors})");
 	});
 
 	it("interpolateTemplate leaves {commitAuthor} untouched when not provided", () => {

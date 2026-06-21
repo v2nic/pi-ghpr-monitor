@@ -674,6 +674,7 @@ describe("Description staleness nudge architecture", () => {
 		expect(stalenessBlock).toContain("commitShortOid,");
 		expect(stalenessBlock).toContain("commitUrl,");
 		expect(stalenessBlock).toContain("commitAuthor,");
+		expect(stalenessBlock).toContain("commitCoauthors,");
 	});
 
 	it("includes the commit author in the default staleness message", () => {
@@ -682,6 +683,14 @@ describe("Description staleness nudge architecture", () => {
 		expect(src).toContain("curr.lastCommitAuthor");
 		expect(src).toMatch(/by \$\{commitAuthor\}/);
 		expect(src).toMatch(/pushed to \$\{prLabel\}\$\{authorClause\}/);
+	});
+
+	it("includes co-authors in the default staleness message, on by default", () => {
+		// Co-authors come from the analyzed snapshot and are appended as a
+		// "(co-authored by ...)" clause, omitted when there are no co-authors.
+		expect(src).toContain("curr.lastCommitCoauthors");
+		expect(src).toMatch(/co-authored by \$\{commitCoauthors\}/);
+		expect(src).toMatch(/\$\{prLabel\}\$\{authorClause\}\$\{coauthorClause\}/);
 	});
 });
 

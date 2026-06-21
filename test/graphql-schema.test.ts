@@ -64,7 +64,7 @@ const QUERY_FIELDS: Record<string, string[]> = {
 	PullRequestReviewThread: ["id", "isResolved", "comments"],
 	PullRequestReviewComment: ["id", "fullDatabaseId", "body", "author", "createdAt", "path", "line", "diffHunk", "reactions"],
 	PullRequestCommit: ["commit"],
-	Commit: ["oid", "author", "checkSuites", "status"],
+	Commit: ["oid", "messageBody", "author", "checkSuites", "status"],
 	GitActor: ["name", "user"],
 	CheckSuite: ["id", "conclusion", "status", "app", "checkRuns"],
 	CheckRun: ["name", "conclusion", "status"],

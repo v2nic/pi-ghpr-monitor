@@ -80,6 +80,9 @@ export interface CommitNode {
 		oid: string;
 		/** Optional: present in live API responses, may be omitted in fixtures. */
 		author?: GitActorNode | null;
+		/** Commit message body, used to extract Co-authored-by trailers.
+		 *  Optional: present in live API responses, may be omitted in fixtures. */
+		messageBody?: string | null;
 		checkSuites: { nodes: CheckSuiteNode[] };
 		status: CommitStatusNode | null;
 	};
@@ -151,6 +154,10 @@ export interface PRStatus {
 	/** Author of the latest commit (GitHub login, falling back to the git
 	 *  author name). Empty string when no commit or author info is available. */
 	lastCommitAuthor: string;
+	/** Co-authors of the latest commit, parsed from the `Co-authored-by:`
+	 *  trailers in the commit message and joined with ", ". Empty string when
+	 *  the commit has no co-authors. */
+	lastCommitCoauthors: string;
 	// Detail for enriched notifications
 	threadDetails: ThreadSummary[];
 	commentDetails: CommentSummary[];
@@ -304,6 +311,27 @@ function generalCommentRestApiId(c: CommentNode): string {
 	return c.databaseId != null ? String(c.databaseId) : (c.fullDatabaseId ?? "");
 }
 
+/** Parse `Co-authored-by:` trailers from a commit message and return the
+ *  co-author display names (with any trailing `<email>` stripped), de-duplicated
+ *  and in order of appearance. Returns an empty array when there are no
+ *  co-author trailers (or the message is empty/absent). */
+export function parseCoauthors(message: string | null | undefined): string[] {
+	if (!message) return [];
+	const re = /^[ \t]*co-authored-by:[ \t]*(.+?)[ \t]*$/gim;
+	const names: string[] = [];
+	const seen = new Set<string>();
+	let match: RegExpExecArray | null;
+	while ((match = re.exec(message)) !== null) {
+		// Drop a trailing "<email>" so only the human-readable name remains.
+		const name = match[1].replace(/[ \t]*<[^>]*>[ \t]*$/, "").trim();
+		if (name && !seen.has(name)) {
+			seen.add(name);
+			names.push(name);
+		}
+	}
+	return names;
+}
+
 export function snapshotPR(pr: PullRequestData, ignoredBots: string[]): PRStatus {
 	const ignoredBotsSet = ignoredBots.length > 0 ? new Set(ignoredBots) : null;
 
@@ -382,6 +410,8 @@ export function snapshotPR(pr: PullRequestData, ignoredBots: string[]): PRStatus
 	// absent (e.g. unlinked commit email with no name), in which case stay empty.
 	const lastCommitAuthor =
 		latestCommit?.author?.user?.login ?? latestCommit?.author?.name ?? "";
+	// Co-authors come from the Co-authored-by trailers; empty when there are none.
+	const lastCommitCoauthors = parseCoauthors(latestCommit?.messageBody).join(", ");
 
 	return {
 		unresolvedThreads: countUnresolvedThreads(pr),
@@ -396,6 +426,7 @@ export function snapshotPR(pr: PullRequestData, ignoredBots: string[]): PRStatus
 		lastCommentBySelf: false,
 		lastCommitOid,
 		lastCommitAuthor,
+		lastCommitCoauthors,
 		threadDetails: threads,
 		commentDetails: comments,
 		checkDetails: checks,

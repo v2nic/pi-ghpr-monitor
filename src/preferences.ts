@@ -80,7 +80,7 @@ export const PreferencesSchema = Type.Object(
 		descriptionStaleness: Type.Optional(
 			Type.String({
 				description:
-					"Prompt override for description staleness nudge when new commits are detected. Variables: {owner}, {repo}, {number}, {host}, {prLabel}, {prUrl}, {commitOid}, {commitShortOid}, {commitUrl}, {commitAuthor}",
+					"Prompt override for description staleness nudge when new commits are detected. Variables: {owner}, {repo}, {number}, {host}, {prLabel}, {prUrl}, {commitOid}, {commitShortOid}, {commitUrl}, {commitAuthor}, {commitCoauthors}",
 			}),
 		),
 	},
@@ -170,9 +170,10 @@ export interface TemplateVars {
 	commitShortOid?: string;
 	commitUrl?: string;
 	commitAuthor?: string;
+	commitCoauthors?: string;
 }
 
-const TEMPLATE_VAR_RE = /\{(owner|repo|number|host|prLabel|prUrl|unresolvedThreads|generalComments|failingChecks|conflict|intervalSec|commitOid|commitShortOid|commitUrl|commitAuthor)\}/g;
+const TEMPLATE_VAR_RE = /\{(owner|repo|number|host|prLabel|prUrl|unresolvedThreads|generalComments|failingChecks|conflict|intervalSec|commitOid|commitShortOid|commitUrl|commitAuthor|commitCoauthors)\}/g;
 
 /** Non-global version for .test() checks. The /g flag causes .test() to
  *  advance lastIndex across successive calls, producing false negatives.
@@ -218,6 +219,8 @@ export function interpolateTemplate(template: string, vars: TemplateVars): strin
 				return vars.commitUrl ?? match;
 			case "commitAuthor":
 				return vars.commitAuthor ?? match;
+			case "commitCoauthors":
+				return vars.commitCoauthors ?? match;
 			default:
 				return match;
 		}
