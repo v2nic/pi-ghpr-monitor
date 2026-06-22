@@ -30,6 +30,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
 import { log } from "./logger";
+import { DEFAULT_PR_CREATE_NUDGE } from "./pr-create-hook";
 
 // ---------------------------------------------------------------------------
 // TypeBox schema
@@ -129,7 +130,7 @@ export const DEFAULT_PREFERENCES: Partial<Record<keyof Preferences, string | und
 	allClear: "✨ {prLabel} — no issues, all clear",
 	firstPoll: "📡 Monitoring {owner}/{repo}#{number}... (polling every {intervalSec}s)",
 	descriptionStaleness: undefined,
-	prCreateNudge: undefined,
+	prCreateNudge: DEFAULT_PR_CREATE_NUDGE,
 };
 
 // ---------------------------------------------------------------------------
